@@ -1,0 +1,5 @@
+*.idea
+*__pycache__*
+*.pyc
+dataset/*
+raw_data/*
