@@ -4,10 +4,10 @@ import os
 import csv
 import json
 
-items = os.listdir('custom_dataset1')
+items = os.listdir('dataset/custom_dataset1')
 jason_data = {}
 for item in items:
-    seq = 'custom_dataset1/'+item
+    seq = 'dataset/custom_dataset1/'+item
     if os.path.isfile(seq):
         continue
 
@@ -60,5 +60,5 @@ for item in items:
     print(item)
 
 
-with open('custom_dataset1/custom_dataset1.json', 'w') as outfile:
+with open('dataset/custom_dataset1/custom_dataset1.json', 'w') as outfile:
     json.dump(jason_data, outfile)
