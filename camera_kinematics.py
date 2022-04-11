@@ -4,8 +4,9 @@ import time
 import numpy as np
 import cv2 as cv
 from scipy.spatial.transform import Rotation as R
-from utils import plot_kinematics
+from utils import plot_kinematics, make_DCM
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 
 class CameraKinematics:
 
@@ -34,7 +35,7 @@ class CameraKinematics:
             return None
 
         ## calculate a DCM and find transpose that takes body to inertial
-        DCM_ib = self.make_DCM(eul).T
+        DCM_ib = make_DCM(eul).T
 
         ## return vector in inertial coordinates
         return np.matmul(DCM_ib, body_vec)
@@ -43,7 +44,7 @@ class CameraKinematics:
 
         ## calculate a "DCM" using euler angles of camera body, to convert vector
         ## from inertial to body coordinates
-        DCM_bi = self.make_DCM(eul)
+        DCM_bi = make_DCM(eul)
 
         ## return the vector in body coordinates
         return np.matmul(DCM_bi, in_vec)
@@ -59,7 +60,7 @@ class CameraKinematics:
         ## for MAVIC Mini camera, the body axis can be converted to camera
         ## axis by a 90 deg yaw and a 90 deg roll consecutively. then we transpose
         ## it to get camera to body
-        DCM_bc = self.make_DCM([90*np.pi/180, 0, 90*np.pi/180]).T
+        DCM_bc = make_DCM([90*np.pi/180, 0, 90*np.pi/180]).T
 
         return np.matmul(DCM_bc, vec)
 
@@ -67,7 +68,7 @@ class CameraKinematics:
 
         ## for MAVIC Mini camera, the body axis can be converted to camera
         ## axis by a 90 deg yaw and a 90 deg roll consecutively.
-        DCM_cb = self.make_DCM([90*np.pi/180, 0, 90*np.pi/180])
+        DCM_cb = make_DCM([90*np.pi/180, 0, 90*np.pi/180])
 
         return np.matmul(DCM_cb, vec)
 
@@ -123,6 +124,26 @@ class CameraKinematics:
             cv.imshow("image", frame)
             cv.waitKey(33)
 
+    def reproject_single(self, drone_pose, gt_pose, eul, img_shape):
+        dir = gt_pose - drone_pose
+
+        w = img_shape[1]
+        h = img_shape[0]
+        self.init_params(w, h)
+
+        dir = dir/np.linalg.norm(dir)
+        imu_meas = eul
+
+        body_dir_est = self.inertia_to_body(dir,imu_meas)
+        cam_dir_est = self.body_to_cam(body_dir_est)
+        center_est = self.from_direction_vector(cam_dir_est, self._cx, self._cy, self._f)
+        rect = (center_est[0]-1,center_est[1]-1,2,2)
+        corners = self.get_camera_frame_vecs(imu_meas,self._w,self._h)
+        if self._vis:
+            plot_kinematics(imu_meas,dir,self._ax_3d,corners)
+
+        return center_est
+
     def get_camera_frame_vecs(self, eul, w, h):
 
         ## convert image corners from a point in "image coordinates" to a vector
@@ -142,22 +163,3 @@ class CameraKinematics:
 
         return (top_left_inertia_dir,top_right_inertia_dir,\
                 bottom_left_inertia_dir,bottom_right_inertia_dir)
-
-    def make_DCM(self, eul):
-
-        phi = eul[0]
-        theta = eul[1]
-        psi = eul[2]
-
-        DCM = np.zeros((3,3))
-        DCM[0,0] = np.cos(psi)*np.cos(theta)
-        DCM[0,1] = np.sin(psi)*np.cos(theta)
-        DCM[0,2] = -np.sin(theta)
-        DCM[1,0] = np.cos(psi)*np.sin(theta)*np.sin(phi)-np.sin(psi)*np.cos(phi)
-        DCM[1,1] = np.sin(psi)*np.sin(theta)*np.sin(phi)+np.cos(psi)*np.cos(phi)
-        DCM[1,2] = np.cos(theta)*np.sin(phi)
-        DCM[2,0] = np.cos(psi)*np.sin(theta)*np.cos(phi)+np.sin(psi)*np.sin(phi)
-        DCM[2,1] = np.sin(psi)*np.sin(theta)*np.cos(phi)-np.cos(psi)*np.sin(phi)
-        DCM[2,2] = np.cos(theta)*np.cos(phi)
-
-        return DCM

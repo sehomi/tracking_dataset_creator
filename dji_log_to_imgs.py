@@ -103,9 +103,9 @@ def write_ground_truth_box(dir,rect=None):
         ret = True
         rect = cv.selectROI(win_name,frame)
         if rect[2] <= 1:
-            rect[2] = 2
+            rect[2] = (rect[0], rect[1], 2, rect[3])
         if rect[3] <= 1:
-            rect[3] = 2
+            rect[3] = (rect[0], rect[1], rect[2], 2)
 
     x1 = rect[0]
     y1 = rect[1]
@@ -141,7 +141,7 @@ def write_cam_stats(dir, num, start):
 
 
 
-log_path = "raw_data/dji_logs/soccerfield_mavic_2"
+log_path = "raw_data/dji_logs/park_mavic_7"
 skip_rate = 0
 
 win_name = "dataset_creator"
@@ -157,7 +157,12 @@ tracking_challenges = {"camera motion":0, "illum change":0, "occlusion":0, \
                        "motion change":0, "size change":0}
 btn_bar_corner = [0,0]
 
-number_of_imgs = len(os.listdir(log_path)) - 1
+files = [f for f in os.listdir(log_path) if os.path.isfile(os.path.join(log_path, f))]
+img_files = []
+for file in files:
+    if file.endswith(".jpg"):
+        img_files.append(file)
+number_of_imgs = len(img_files)
 if number_of_imgs == len(data_lines):
     print("Number of images and log lines match. proceeding ...")
 else:
@@ -225,6 +230,8 @@ while True:
     wrtie_occlusion(seq_dir, tracking_challenges["occlusion"])
     wrtie_motion_change(seq_dir, tracking_challenges["motion change"])
     wrtie_size_change(seq_dir, tracking_challenges["size change"])
+
+    # TODO: write camera and target positions to log file
 
     img_name = seq_dir + "/" + "{:08d}".format(frame_counter) + ".jpg"
     cv.imwrite(img_name, frame)

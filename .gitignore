@@ -1,5 +1,5 @@
 *.idea
 *__pycache__*
 *.pyc
-dataset/*
-raw_data/*
+/dataset/
+/raw_data/

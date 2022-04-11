@@ -154,6 +154,24 @@ def get_dji_raw_imgs(imgsdir):
     names = [img.split('.')[0] for img in imgs]
     nums = [int( name[5:] ) for name in names]
     idxs = np.argsort(nums)
+
+    imgs = np.array(imgs)[idxs]
+    img_dirs = [imgsdir + "/" + img for img in imgs]
+
+    return img_dirs
+
+def get_dataset_imgs(imgsdir):
+
+    files = [f for f in listdir(imgsdir) if isfile(join(imgsdir, f))]
+    imgs = []
+    for file in files:
+        if file.endswith(".jpg"):
+            imgs.append(file)
+
+    names = [img.split('.')[0] for img in imgs]
+    nums = [int( name[:] ) for name in names]
+    idxs = np.argsort(nums)
+
     imgs = np.array(imgs)[idxs]
     img_dirs = [imgsdir + "/" + img for img in imgs]
 
@@ -171,3 +189,22 @@ def check_time_overlap(times_1, times_2):
     res = xs.intersection(y)
 
     return not len(res) == 0
+
+def make_DCM(eul):
+
+    phi = eul[0]
+    theta = eul[1]
+    psi = eul[2]
+
+    DCM = np.zeros((3,3))
+    DCM[0,0] = np.cos(psi)*np.cos(theta)
+    DCM[0,1] = np.sin(psi)*np.cos(theta)
+    DCM[0,2] = -np.sin(theta)
+    DCM[1,0] = np.cos(psi)*np.sin(theta)*np.sin(phi)-np.sin(psi)*np.cos(phi)
+    DCM[1,1] = np.sin(psi)*np.sin(theta)*np.sin(phi)+np.cos(psi)*np.cos(phi)
+    DCM[1,2] = np.cos(theta)*np.sin(phi)
+    DCM[2,0] = np.cos(psi)*np.sin(theta)*np.cos(phi)+np.sin(psi)*np.sin(phi)
+    DCM[2,1] = np.sin(psi)*np.sin(theta)*np.cos(phi)-np.cos(psi)*np.sin(phi)
+    DCM[2,2] = np.cos(theta)*np.cos(phi)
+
+    return DCM
