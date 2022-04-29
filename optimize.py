@@ -249,6 +249,8 @@ class Optimizer:
         # self.ax_3d.set_ylim(-40,10)
         # ax.set_zlim(7,12)
 
+        utl.set_axes_equal(self.ax_3d)
+
         if wait:
             plt.show()
         else:
@@ -377,7 +379,6 @@ class Optimizer:
         slowdown=False
         poses_list=[]
         for j in range(self._gt_poses.shape[0]):
-        # for j in range(1000):
             if self._occlusion[j]: continue
             # print(j)
             # self._i=1000
@@ -434,7 +435,7 @@ class Optimizer:
         last_err = None
         last_err_idx = None
         next_err = None
-        for j in range(1000):
+        for j in range(self._gt_poses.shape[0]):
             if self._occlusion[j] and last_err is None:
                 last_err = errs[j-1]
                 next_err = None

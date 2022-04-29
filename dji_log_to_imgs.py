@@ -141,7 +141,7 @@ def write_cam_stats(dir, num, start):
 
 
 
-log_path = "raw_data/dji_logs/park_mavic_7"
+log_path = "raw_data/dji_logs/park_mavic_1"
 skip_rate = 0
 
 win_name = "dataset_creator"
