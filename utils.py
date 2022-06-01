@@ -3,6 +3,7 @@ import utm
 from os import listdir
 from os.path import isfile, join
 import matplotlib.pyplot as plt
+from scipy import ndimage
 
 def plot_kinematics(eul,inertia_dir,ax_3d,corners):
 
@@ -190,6 +191,35 @@ def check_time_overlap(times_1, times_2):
 
     return not len(res) == 0
 
+def time_shift(stamps,data,time_shift):
+
+    for i in range(data.shape[0]):
+
+        j = 0
+        dt = 0
+        while dt < time_shift:
+            j += 1
+
+            if i+j < data.shape[0]:
+                dt = stamps[i+j] - stamps[i]
+            else:
+                dt = stamps[-1] - stamps[i]
+                j -= 1
+                break
+
+        data[i] = data[i+j]
+
+    return data
+
+def shift(data,shift):
+
+    data = np.roll(data, shift)
+    data[:shift] = data[shift]
+
+    return data
+
+
+
 def make_DCM(eul):
 
     phi = eul[0]
@@ -209,15 +239,11 @@ def make_DCM(eul):
 
     return DCM
 
+def compare_curves(base_data, data):
+    return ndimage.sobel(base_data,axis=0)
+
+
 def set_axes_equal(ax):
-    '''Make axes of 3D plot have equal scale so that spheres appear as spheres,
-    cubes as cubes, etc..  This is one possible solution to Matplotlib's
-    ax.set_aspect('equal') and ax.axis('equal') not working for 3D.
-
-    Input
-      ax: a matplotlib axis, e.g., as output from plt.gca().
-    '''
-
     x_limits = ax.get_xlim3d()
     y_limits = ax.get_ylim3d()
     z_limits = ax.get_zlim3d()
@@ -236,3 +262,24 @@ def set_axes_equal(ax):
     ax.set_xlim3d([x_middle - plot_radius, x_middle + plot_radius])
     ax.set_ylim3d([y_middle - plot_radius, y_middle + plot_radius])
     ax.set_zlim3d([z_middle - plot_radius, z_middle + plot_radius])
+
+def quaternion_to_euler_angle(w, x, y, z):
+    ysqr = y * y
+
+    t0 = +2.0 * (w * x + y * z)
+    t1 = +1.0 - 2.0 * (x * x + ysqr)
+    X = np.arctan2(t0, t1)
+
+    t2 = +2.0 * (w * y - z * x)
+    t2 = np.where(t2>+1.0,+1.0,t2)
+    #t2 = +1.0 if t2 > +1.0 else t2
+
+    t2 = np.where(t2<-1.0, -1.0, t2)
+    #t2 = -1.0 if t2 < -1.0 else t2
+    Y = np.arcsin(t2)
+
+    t3 = +2.0 * (w * z + x * y)
+    t4 = +1.0 - 2.0 * (ysqr + z * z)
+    Z = np.arctan2(t3, t4)
+
+    return X, Y, Z

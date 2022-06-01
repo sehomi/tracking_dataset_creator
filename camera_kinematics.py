@@ -64,13 +64,21 @@ class CameraKinematics:
 
         return np.matmul(DCM_bc, vec)
 
-    def body_to_cam(self, vec):
+    def body_to_cam(self, vec, tello=False):
 
-        ## for MAVIC Mini camera, the body axis can be converted to camera
-        ## axis by a 90 deg yaw and a 90 deg roll consecutively.
-        DCM_cb = make_DCM([90*np.pi/180, 0, 90*np.pi/180])
+        if tello:
+            ## for Tello drone, the body axis should be rolled 90-beta degrees,
+            ## then yawed 90 degrees to get to cam axis.
+            beta = 12
+            DCM_cb = make_DCM([(90-beta)*np.pi/180, 0, 90*np.pi/180])
+            res = np.matmul(DCM_cb, vec)
+        else:
+            ## for MAVIC Mini camera, the body axis can be converted to camera
+            ## axis by a 90 deg yaw and a 90 deg roll consecutively.
+            DCM_cb = make_DCM([90*np.pi/180, 0, 90*np.pi/180])
+            res = np.matmul(DCM_cb, vec)
 
-        return np.matmul(DCM_cb, vec)
+        return res
 
     def to_direction_vector(self, rect, cx, cy, f):
 
@@ -124,7 +132,7 @@ class CameraKinematics:
             cv.imshow("image", frame)
             cv.waitKey(33)
 
-    def reproject_single(self, drone_pose, gt_pose, eul, img_shape):
+    def reproject_single(self, drone_pose, gt_pose, eul, img_shape, tello=False):
         dir = gt_pose - drone_pose
 
         w = img_shape[1]
@@ -135,7 +143,7 @@ class CameraKinematics:
         imu_meas = eul
 
         body_dir_est = self.inertia_to_body(dir,imu_meas)
-        cam_dir_est = self.body_to_cam(body_dir_est)
+        cam_dir_est = self.body_to_cam(body_dir_est, tello=tello)
         center_est = self.from_direction_vector(cam_dir_est, self._cx, self._cy, self._f)
         rect = (center_est[0]-1,center_est[1]-1,2,2)
         corners = self.get_camera_frame_vecs(imu_meas,self._w,self._h)

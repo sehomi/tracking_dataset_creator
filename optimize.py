@@ -4,6 +4,7 @@ import os
 import numpy as np
 from numpy import genfromtxt
 import argparse
+import yaml
 import cv2 as cv
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
@@ -15,114 +16,141 @@ import utils as utl
 
 class Optimizer:
 
-    def __init__(self, path, gt_path, log_path):
+    def __init__(self, path, gt_path, d_type):
 
-        self.img_files = utl.get_dataset_imgs(path)
-        self.img_shape = cv.imread(self.img_files[0]).shape
+        self._tello=False
+        if d_type==0:
+            self.path = path
 
-        self._occlusion = genfromtxt(path+"/occlusion.tag", delimiter=',')
-        print(self._occlusion)
+            self.img_files = utl.get_dataset_imgs(path)
+            self.img_shape = cv.imread(self.img_files[0]).shape
+            self._occlusion = genfromtxt(path+"/occlusion.tag", delimiter=',')
+            self._gt_boxes = genfromtxt(path+"/groundtruth.txt", delimiter=',')
+            self._f = (0.5 * self.img_shape[1] * (1.0 / np.tan((66.0/2.0)*np.pi/180)));
+            self.calc_centers()
 
-        self._gt_boxes = genfromtxt(path+"/groundtruth.txt", delimiter=',')
-        self._f = (0.5 * 440 * (1.0 / np.tan((66.0/2.0)*np.pi/180)));
-        self.calc_centers()
+            gt_data = genfromtxt(gt_path, delimiter=',')
+            gt_data[:,3] = 0
 
-        gt_data = genfromtxt(gt_path, delimiter=',')
-        gt_data[:,3] = 0
+            stats_data = genfromtxt(path+"/camera_states.txt", delimiter=',')
 
-        log_data = genfromtxt(log_path, delimiter=',')
+            ref_loc = gt_data[0,1:4]
 
-        ref_loc = gt_data[0,1:4]
+            drone_poses = utl.gps_to_ned(ref_loc, stats_data[:,1:4])
+            gt_poses = utl.gps_to_ned(ref_loc, gt_data[:,1:4])
+            self._gt_poses, sub_idxs = utl.interpolate(stats_data[:,0], gt_data[:,0], \
+                                                    gt_poses, synced=True)
+            num_imgs = len(self.img_files)
+            sub_idxs = np.array(sub_idxs)
+            sub_idxs = sub_idxs[sub_idxs<num_imgs]
+            self._gt_poses = self._gt_poses[0:sub_idxs.shape[0]]
+            self._drone_poses = drone_poses[sub_idxs]
+            self.img_files = np.array(self.img_files)[sub_idxs]
+            self._occlusion = self._occlusion[sub_idxs]
+            self._gt_boxes = self._gt_boxes[sub_idxs]
+            self._centers = self._centers[sub_idxs]
+            euls = stats_data[:,4:7]
+            self._euls = euls[sub_idxs]
+            self._smooth_eul = utl.make_smooth(self._euls)
 
-        drone_poses = utl.gps_to_ned(ref_loc, log_data[:,2:5])
-        gt_poses = utl.gps_to_ned(ref_loc, gt_data[:,1:4])
-        self._gt_poses, sub_idxs = utl.interpolate(log_data[:,1], gt_data[:,0], \
-                                                gt_poses, synced=True)
-        num_imgs = len(self.img_files)
-        sub_idxs = np.array(sub_idxs)
-        sub_idxs = sub_idxs[sub_idxs<num_imgs]
-        self._gt_poses = self._gt_poses[0:sub_idxs.shape[0]]
-        self._drone_poses = drone_poses[sub_idxs]
-        self.img_files = np.array(self.img_files)[sub_idxs]
-        self._occlusion = self._occlusion[sub_idxs]
-        self._gt_boxes = self._gt_boxes[sub_idxs]
-        self._centers = self._centers[sub_idxs]
-        euls = log_data[:,5:8]
-        self._euls = euls[sub_idxs]
-        self._smooth_eul = utl.make_smooth(self._euls)
+            self._times = stats_data[:,0][sub_idxs]
+            self._times = self._times - self._times[0]
 
-        self._times = log_data[:,1][sub_idxs]
-        self._times = self._times - self._times[0]
+            self.kin = CameraKinematics(66, vis=False)
 
-        self.kin = CameraKinematics(66, vis=False)
+        if d_type==1:
+            self.path = path
+
+            self.img_files = utl.get_dataset_imgs(path)
+            self.img_shape = cv.imread(self.img_files[0]).shape
+            self._occlusion = genfromtxt(path+"/occlusion.tag", delimiter=',')
+            self._gt_boxes = genfromtxt(path+"/groundtruth.txt", delimiter=',')
+            self._f = (0.5 * self.img_shape[1] * (1.0 / np.tan((66.0/2.0)*np.pi/180)));
+            self.calc_centers()
+
+            gt_data = genfromtxt(gt_path, delimiter=',')
+            gt_data = np.insert(gt_data, 2, 0, axis=1)
+
+            stats_data = genfromtxt(path+"/camera_states.txt", delimiter=',')
+
+            with open(path+"/test_config.txt", 'r') as stream:
+                test_config = yaml.safe_load(stream)
+
+            bl_loc = test_config["p_bottom_left_ned"]
+            angle = test_config["field_angle"]
+
+            drone_poses = utl.gps_to_ned(bl_loc, stats_data[:,1:4])
+            gt_poses = utl.interpolate(stats_data[:,0], gt_data[:,3], gt_data[:,:3])
+            gt_poses = utl.field_to_ned(gt_poses, angle)
+
+            num_imgs = len(self.img_files)
+            num_gt = gt_poses.shape[0]
+            num_dt = drone_poses.shape[0]
+
+            limit = np.min([num_dt,num_imgs, num_gt])
+            sub_idxs = np.array([i for i in range(limit)])
+            # sub_idxs = sub_idxs[sub_idxs<num_imgs]
+
+            self._gt_poses = gt_poses[sub_idxs]
+            self._drone_poses = drone_poses[sub_idxs]
+            euls = stats_data[:,4:7]
+            self._euls = euls[sub_idxs]
+            self._smooth_eul = utl.make_smooth(self._euls)
+            self._occlusion = self._occlusion[sub_idxs]
+            self._gt_boxes = self._gt_boxes[sub_idxs]
+            self._centers = self._centers[sub_idxs]
+
+            self._times = stats_data[:,0][sub_idxs]
+            self._times = self._times - self._times[0]
+
+            self.kin = CameraKinematics(66, vis=False)
+
+        if d_type==2:
+            self.path = path
+
+            self.img_files = utl.get_dataset_imgs(path)
+            self.img_shape = cv.imread(self.img_files[0]).shape
+            self._occlusion = genfromtxt(path+"/occlusion.tag", delimiter=',')
+            self._gt_boxes = genfromtxt(path+"/groundtruth.txt", delimiter=',')
+            self._f = (0.5 * self.img_shape[1] * (1.0 / np.tan((55.0/2.0)*np.pi/180)))
+
+            self.calc_centers()
+
+            stats_data = genfromtxt(path+"/camera_states.txt", delimiter=',')
+
+            drone_poses = stats_data[:,1:4]
+            drone_poses[:,2] = -drone_poses[:,2]
+
+            ## 0.5 HZ
+            # drone_poses[:,2] += 0.03
+            # drone_poses[:,1] = -0.13
+            ## 2.1 HZ
+            drone_poses[:,2] += 0.03
+            drone_poses[:,1] = -0.03
+
+            gt_poses = np.zeros((drone_poses.shape[0],3))
+
+            num_imgs = len(self.img_files)
+            num_gt = gt_poses.shape[0]
+            num_dt = drone_poses.shape[0]
+
+
+            self._gt_poses = gt_poses
+            self._drone_poses = drone_poses
+            euls = stats_data[:,4:7]
+            self._euls = euls
+            self._smooth_eul = utl.make_smooth(self._euls)
+
+            self._times = stats_data[:,0]
+            self._times = self._times - self._times[0]
+
+            self.kin = CameraKinematics(55.0, vis=False)
+            self._tello=True
 
         fig_3d=plt.figure(0)
         self.ax_3d=plt.axes(projection ='3d')
         self.ax_3d.set_title('Trajectories Plot')
 
-        print("gt: ", self._gt_poses.shape)
-        print("drone: ", self._drone_poses.shape)
-        print("eul: ", self._smooth_eul.shape)
-        print("imgs: ", len(self.img_files))
-        print("occs: ", self._occlusion.shape)
-        print("centers: ", self._centers.shape)
-        # exit()
-
-
-    def linearize(self, i):
-
-        # A = []
-        # b = []
-        # for i in range(self._euls.shape[0]):
-        #     R = utl.make_DCM(self._euls[i,:])
-        #
-        #     Xc =  np.matmul(R, self._gt_poses[i,:] - self._drone_poses[i,:])
-        #
-        #     xc = Xc[0]
-        #     yc = Xc[1]
-        #     zc = Xc[2]
-        #
-        #     G = np.zeros((2,3))
-        #     G[0,0] = 1/zc
-        #     G[0,1] = 0
-        #     # G[0,2] = -xc/(zc**2)
-        #     G[0,2] = 0
-        #     G[1,0] = 0
-        #     G[1,1] = 1/zc
-        #     # G[1,2] = -yc/(zc**2)
-        #     G[1,2] = 0
-        #
-        #     G = np.matmul(G,R)
-        #     A.append(G)
-        #
-        #     Xn_est = np.array([xc/zc, yc/zc])
-        #     b.append(self._centers[i] - Xn_est)
-        #
-        # return np.array(A), np.array(b)
-
-        R = utl.make_DCM(self._euls[i,:])
-        Xc =  np.matmul(R, self._gt_poses[i,:] - self._drone_poses[i,:])
-
-        xc = Xc[0]
-        yc = Xc[1]
-        zc = Xc[2]
-
-        G = np.zeros((2,3))
-        G[0,0] = 1/zc
-        G[0,1] = 0
-        # G[0,2] = -xc/(zc**2)
-        G[0,2] = 0
-        G[1,0] = 0
-        G[1,1] = 1/zc
-        # G[1,2] = -yc/(zc**2)
-        G[1,2] = 0
-
-        G = np.matmul(G,R)
-
-        Xn_est = np.array([xc/zc, yc/zc])
-        b = self._centers[i] - Xn_est
-
-        return G,b
 
     def calc_centers(self):
         centers = []
@@ -135,118 +163,60 @@ class Optimizer:
 
         self._centers = np.array(centers)
 
-    def solve(self, A, b):
 
-        delta = []
-        for i, G in enumerate(A):
-            try:
-                G_t = np.transpose(G)
-                d = np.linalg.inv( np.matmul(G_t, G) )
-                d = np.matmul(d, G_t)
-                d = np.matmul(d, b[i])
-                delta.append(d)
-                # print(d)
-            except:
-                delta.append([0,0,0])
-                # print("singularity")
+    def calc_boxes(self, xns):
 
-        delta = np.array(delta)
-        return delta
+        open(self.path+"/groundtruth_corrected.txt", "w").close()
 
-    # def loss(self, A, b, d):
-    #
-    #     loss = 0
-    #     for i, G in enumerate(A):
-    #         loss = loss + np.linalg.norm(np.matmul(G, d[i]) - b[i])**2
-    #
-    #     return loss
+        boxes = []
+        for i, ct in enumerate(xns):
+            w = int(self._gt_boxes[i,2] - self._gt_boxes[i,0])
+            h = int(self._gt_boxes[i,5] - self._gt_boxes[i,1])
+            if self._occlusion[i]:
+                rect = (ct[0] - int(w/2), ct[1] - int(h/2), w, h)
+            else:
+                rect = (int(self._centers[i][0]*self._f)-int(w/2),int(self._centers[i][1]*self._f)-int(h/2),w,h)
 
-    def loss(self, X):
+            boxes.append(rect)
 
-        new_pos = self._gt_poses[self._i]
-        new_pos[0] = X[0]
-        new_pos[1] = X[1]
+            x1 = rect[0]
+            y1 = rect[1]
+            x2 = rect[0] + rect[2]
+            y2 = rect[1]
+            x3 = rect[0] + rect[2]
+            y3 = rect[1] + rect[3]
+            x4 = rect[0]
+            y4 = rect[1] + rect[3]
 
-        xn_est = self.kin.reproject_single(self._drone_poses[self._i], new_pos, self._smooth_eul[self._i], self.img_shape)
-        xn_est = np.array( [val/self._f for val in xn_est] )
+            f = open(self.path+"/groundtruth_corrected.txt", "a")
+            f.write("{:.2f},{:.2f},{:.2f},{:.2f},{:.2f},{:.2f},{:.2f},{:.2f}\n".format(x1,y1,x2,y2,x3,y3,x4,y4))
+            f.close()
 
-        loss = np.linalg.norm(xn_est*self._f - self._centers[self._i]*self._f)**2
-        print(loss)
+        return boxes
 
-        # first_img = cv.imread(self.img_files[self._i])
-        # rect = (int(xn_est[0]*self._f)-1,int(xn_est[1]*self._f)-1,2,2)
-        # cv.rectangle(first_img, rect, (0,255,255), 2)
-        # rect = (int(self._centers[self._i][0]*self._f)-1,int(self._centers[self._i][1]*self._f)-1,2,2)
-        # cv.rectangle(first_img, rect, (0,0,255), 2)
-        # cv.imshow("image", first_img)
-        # cv.waitKey(33)
-
-        return loss
-
-
-    def loss1(self, X):
-
-        print(X)
-
-        new_poses = self._gt_poses.copy()
-        loss = 0
-        # for j in range(new_poses.shape[0]):
-        #     if self._occlusion[j]: continue
-        #     if j%10!=0: continue
-        j=self._i
-        new_pos = [new_poses[j][0], new_poses[j][1], new_poses[j][2]]
-
-        t = self._times[j]
-
-        for k in range(self._deg):
-            new_pos[0] += X[k+0*self._deg]*t**k
-            new_pos[1] += X[k+1*self._deg]*t**k
-            # new_pos[2] += X[k+2*self._deg]*t**k
-
-        new_poses[j] = new_pos
-
-        xn_est = self.kin.reproject_single(self._drone_poses[j], new_pos, self._smooth_eul[j], self.img_shape)
-        xn_est = np.array( [val/self._f for val in xn_est] )
-
-        loss += np.linalg.norm(xn_est*self._f - self._centers[j]*self._f)**2
-
-            # img = cv.imread(self.img_files[j])
-            # cv.imshow("test", img)
-            # cv.waitKey(1)
-
-
-        self.new_poses = np.array(new_poses)
-        # self.plot_trajs()
-
-        print(loss)
-
-        xn_est = self.kin.reproject_single(self._drone_poses[self._i], new_poses[self._i], utl.make_smooth(self._euls)[self._i], self.img_shape)
-        xn_est = np.array( [val/self._f for val in xn_est] )
-
-        first_img = cv.imread(self.img_files[self._i])
-        rect = (int(xn_est[0]*self._f)-1,int(xn_est[1]*self._f)-1,2,2)
-        cv.rectangle(first_img, rect, (0,255,255), 2)
-        rect = (int(self._centers[self._i][0]*self._f)-1,int(self._centers[self._i][1]*self._f)-1,2,2)
-        cv.rectangle(first_img, rect, (0,0,255), 2)
-        cv.imshow("image", first_img)
-        cv.waitKey(1)
-
-        return loss
 
     def plot_trajs(self, wait=True):
 
         self.ax_3d.cla()
 
-        self.ax_3d.plot(self.new_poses[:,0],self.new_poses[:,1],self.new_poses[:,2], color='blue')
-        self.ax_3d.plot(self._gt_poses[:,0],self._gt_poses[:,1],self._gt_poses[:,2], color='black')
-        # self.ax_3d.plot(self._poses_list[:,0],self._poses_list[:,1],self._poses_list[:,2], color='green')
+        if wait:
+            self.ax_3d.plot(self.new_poses[:1000,0],self.new_poses[:1000,1],self.new_poses[:1000,2], color='blue')
+            self.ax_3d.plot(self._gt_poses[:1000,0],self._gt_poses[:1000,1],self._gt_poses[:1000,2], color='black')
+
+            deriv = 5*utl.compare_curves(self._gt_poses, self.new_poses)
+            # self.ax_3d.quiver(self._gt_poses[0:1000:50,0], self._gt_poses[0:1000:50,1], \
+            #                   self._gt_poses[0:1000:50,2], deriv[0:1000:50,0], \
+            #                   deriv[0:1000:50,1], deriv[0:1000:50,2], length=1, \
+            #                   linewidth=2, color='red', pivot='tail')
+        else:
+            self.ax_3d.plot(self._poses_list[:,0],self._poses_list[:,1],self._poses_list[:,2], color='green')
 
         self.ax_3d.set_xlabel('x')
         self.ax_3d.set_ylabel('y')
         self.ax_3d.set_zlabel('z')
 
-        # self.ax_3d.set_xlim(-10,90)
-        # self.ax_3d.set_ylim(-40,10)
+        # self.ax_3d.set_xlim(-30,20)
+        # self.ax_3d.set_ylim(0,50)
         # ax.set_zlim(7,12)
 
         utl.set_axes_equal(self.ax_3d)
@@ -256,12 +226,6 @@ class Optimizer:
         else:
             plt.pause(0.03)
 
-    def f(self, X):
-        x = X[0]
-        y = X[1]
-        z = X[2]
-
-        return np.array( [x*self._f/z, y*self._f/z] ).reshape((2,1))
 
     def G_Y(self, Y):
         x = Y[0]
@@ -277,355 +241,134 @@ class Optimizer:
         jac[1,2] = -y*self._f/z**2
         return jac
 
-    def Ts(self, t):
 
-        ts = np.zeros((self.err_deg,1))
-        for c in range(self.err_deg):
-            ts[c] = t**c
-
-        return ts
-
-    def X_P(self, t):
-
-        jac = np.zeros((3,3,self.err_deg))
-
-        for i in range(3):
-            for j in range(self.err_deg):
-                jac[i, i, j] = t**j
-
-        return jac
-
-    def X_P_cos(self, t):
-
-        jac = np.zeros((3,3,2*self.err_deg))
-
-        for i in range(3):
-            for j in range(self.err_deg):
-                idx = 2*j
-                jac[i, i, idx] = np.cos(2*(j+1)*np.pi*t/self._L)
-                jac[i, i, idx+1] = np.sin(2*(j+1)*np.pi*t/self._L)
-
-        return jac
-
-    def COSs(self, t):
-
-        jac = np.zeros((2*self.err_deg,1))
-
-        for j in range(self.err_deg):
-            idx = 2*j
-            jac[idx, 0] = np.cos(2*(j+1)*np.pi*t/self._L)
-            jac[idx+1, 0] = np.sin(2*(j+1)*np.pi*t/self._L)
-
-        return jac
-
-    def optimize_single_point(self):
-
-        self._i=1203
-        j=self._i
-        Tcb = utl.make_DCM([90*np.pi/180, 0, 90*np.pi/180])
-        Tbi = utl.make_DCM(self._euls[j,:])
-        T = np.matmul(Tcb, Tbi)
-        X = self._gt_poses[j,:]
-        center = self._centers[j]*self._f - np.array([self.img_shape[1]/2, self.img_shape[0]/2])
-
-        for i in range(1000):
-            xn_est = self.kin.reproject_single(self._drone_poses[self._i], X, self._smooth_eul[self._i], self.img_shape)
-            xn_est -= np.array([self.img_shape[1]/2, self.img_shape[0]/2])
-            # print(xn_est)
-
-            Y = np.matmul( T, (X - self._drone_poses[self._i]) )
-
-            # Y = Y/np.linalg.norm(Y)
-            # print(Y)
-            # center_est = self.kin.from_direction_vector(Y, self.kin._cx, self.kin._cy, self.kin._f)
-            # rect = (center_est[0]-1,center_est[1]-1,2,2)
-
-
-            grad = np.matmul( 2*(xn_est - center) , np.matmul(self.G_Y(Y) , T) )
-            grad = 0.001*grad
-            # print("\n\n*****\n\n")
-            # print(grad)
-            # print(2*(xn_est - center))
-            # print(self.f_p(Y))
-            # print(T)
-            X[0] = X[0] - grad[0]
-            X[1] = X[1] - grad[1]
-
-            print(np.linalg.norm(grad))
-
-            first_img = cv.imread(self.img_files[self._i])
-            rect = (int(xn_est[0]+self.img_shape[1]/2)-1,int(xn_est[1]+self.img_shape[0]/2)-1,2,2)
-            cv.rectangle(first_img, rect, (0,255,255), 2)
-            rect = (int(self._centers[self._i][0]*self._f)-1,int(self._centers[self._i][1]*self._f)-1,2,2)
-            # cv.rectangle(first_img, rect, (0,0,255), 2)
-            cv.imshow("image", first_img)
-            cv.waitKey(33)
-
-        # X = self._gt_poses
-        #
-        # for i in range(1000):
-        #     A, b = self.linearize()
-        #     de = self.solve(A,b)
-        #     self._gt_poses[:51] = self._gt_poses[:51] + de
-        #     print(self.loss(A,b,de))
-        #     print(de[30])
 
     def optimize(self):
 
+        # self._smooth_eul = utl.time_shift(self._times, self._smooth_eul, 0.2)
+        # self._drone_poses = utl.time_shift(self._times, self._drone_poses, 0.2)
+        # self._smooth_eul = utl.shift(self._smooth_eul, -5)
+
+        print("Optimizing non occluded frames...")
+
         self.new_poses = self._gt_poses.copy()
-        errs = np.zeros((self._gt_poses.shape[0],3))
 
-        rate_coef = 0.001
-        slowdown=False
+        if not self._tello:
+            errs = np.zeros((self._gt_poses.shape[0],3))
+
+            rate_coef = 0.001
+            slowdown=False
+            poses_list=[]
+            for j in range(self._gt_poses.shape[0]):
+                if self._occlusion[j]: continue
+
+                beta=0
+                if self._tello:
+                    beta=12
+                Tcb = utl.make_DCM([(90-beta)*np.pi/180, 0, 90*np.pi/180])
+                Tbi = utl.make_DCM(self._smooth_eul[j,:])
+                T = np.matmul(Tcb, Tbi)
+                X = self._gt_poses[j,:].copy()
+                center = self._centers[j]*self._f - np.array([self.img_shape[1]/2, self.img_shape[0]/2])
+
+                counter=0
+                while True:
+                    xn_est = self.kin.reproject_single(self._drone_poses[j], X, \
+                                                       self._smooth_eul[j], self.img_shape, \
+                                                       tello=self._tello)
+                    xn_est -= np.array([self.img_shape[1]/2, self.img_shape[0]/2])
+
+                    Y = np.matmul( T, (X - self._drone_poses[j]) )
+
+                    grad = np.matmul( 2*(xn_est - center) , np.matmul(self.G_Y(Y) , T) )
+                    grad = rate_coef*grad
+
+                    X[0] = X[0] - grad[0]
+                    X[1] = X[1] - grad[1]
+
+                    if np.linalg.norm(grad) < 0.1:
+                        break
+
+                    if counter > 200:
+                        rate_coef *= 0.1
+                        counter=0
+                        slowdown=True
+
+                    counter += 1
+
+                if slowdown:
+                    rate_coef = 0.001
+                    slowdown=False
+
+                # if np.linalg.norm(self.new_poses[j,:] - X) > 20:
+                #     self._occlusion[j] = True
+                #     continue
+
+                self.new_poses[j,:] = X
+                errs[j,:] = X - self._gt_poses[j,:]
+
+                first_img = cv.imread(self.img_files[j])
+                rect = (int(xn_est[0]+self.img_shape[1]/2)-1,int(xn_est[1]+self.img_shape[0]/2)-1,2,2)
+                cv.rectangle(first_img, rect, (0,255,255), 2)
+                rect = (int(self._centers[j][0]*self._f)-1,int(self._centers[j][1]*self._f)-1,2,2)
+                cv.rectangle(first_img, rect, (0,0,255), 2)
+                cv.imshow("image", first_img)
+                cv.waitKey(3)
+
+            print("Interpolating for occluded frames...")
+
+            last_err = None
+            last_err_idx = None
+            next_err = None
+            for j in range(self._gt_poses.shape[0]):
+                if self._occlusion[j] and last_err is None:
+                    last_err = errs[j-1]
+                    next_err = None
+                    last_err_idx = j
+
+                if not self._occlusion[j] and next_err is None and last_err is not  None:
+                    next_err = errs[j]
+
+                    length = j - last_err_idx
+                    for k in range(last_err_idx, j):
+                        err = (k - last_err_idx)/length * next_err + \
+                              (j - k)/length * last_err
+                        self.new_poses[k,:] = self._gt_poses[k,:] + err
+
+                    last_err = None
+
+            self.new_poses = utl.make_smooth(self.new_poses)
+            # self.plot_trajs()
+
         poses_list=[]
-        for j in range(self._gt_poses.shape[0]):
-            if self._occlusion[j]: continue
-            # print(j)
-            # self._i=1000
-            # j=self._i
-            Tcb = utl.make_DCM([90*np.pi/180, 0, 90*np.pi/180])
-            Tbi = utl.make_DCM(self._euls[j,:])
-            T = np.matmul(Tcb, Tbi)
-            X = self._gt_poses[j,:].copy()
-            center = self._centers[j]*self._f - np.array([self.img_shape[1]/2, self.img_shape[0]/2])
+        xn_ests = []
+        for j in range(len(self.new_poses)):
+            xn_est = self.kin.reproject_single(self._drone_poses[j], self.new_poses[j], \
+                                               self._smooth_eul[j], self.img_shape, \
+                                               tello=self._tello)
+            xn_ests.append(xn_est)
+            # print(self._drone_poses[j], self.new_poses[j])
+            # print(xn_est)
 
-            counter=0
-            while True:
-                xn_est = self.kin.reproject_single(self._drone_poses[j], X, self._smooth_eul[j], self.img_shape)
-                xn_est -= np.array([self.img_shape[1]/2, self.img_shape[0]/2])
+        boxes = self.calc_boxes(xn_ests)
+        for j, box in enumerate(boxes):
+            img = cv.imread(self.img_files[j])
 
-                Y = np.matmul( T, (X - self._drone_poses[j]) )
+            if self._occlusion[j]:
+                cv.rectangle(img, box, (0,255,255), 2)
+            else:
+                cv.rectangle(img, box, (0,0,255), 2)
 
-                grad = np.matmul( 2*(xn_est - center) , np.matmul(self.G_Y(Y) , T) )
-                grad = rate_coef*grad
-
-                X[0] = X[0] - grad[0]
-                X[1] = X[1] - grad[1]
-
-                if np.linalg.norm(grad) < 0.1:
-                    break
-
-                if counter > 200:
-                    rate_coef *= 0.1
-                    counter=0
-                    slowdown=True
-
-                counter += 1
-
-            if slowdown and counter<50:
-                rate_coef *= 10
-                slowdown=False
-
-            self.new_poses[j,:] = X
-            # print(errs.shape)
-            errs[j,:] = X - self._gt_poses[j,:]
-            first_img = cv.imread(self.img_files[j])
-            rect = (int(xn_est[0]+self.img_shape[1]/2)-1,int(xn_est[1]+self.img_shape[0]/2)-1,2,2)
-            cv.rectangle(first_img, rect, (0,255,255), 2)
-            rect = (int(self._centers[j][0]*self._f)-1,int(self._centers[j][1]*self._f)-1,2,2)
-            cv.rectangle(first_img, rect, (0,0,255), 2)
-            cv.imshow("image", first_img)
-            cv.waitKey(3)
+            cv.imshow("image", img)
+            cv.waitKey(33)
 
             # poses_list.append(self._drone_poses[j,:])
-            # poses_list.append(self._gt_poses[j,:])
+            # poses_list.append(self.new_poses[j])
             # self._poses_list = np.array(poses_list)
             # self.plot_trajs(wait=False)
 
-        last_err = None
-        last_err_idx = None
-        next_err = None
-        for j in range(self._gt_poses.shape[0]):
-            if self._occlusion[j] and last_err is None:
-                last_err = errs[j-1]
-                next_err = None
-                last_err_idx = j
-
-            if not self._occlusion[j] and next_err is None and last_err is not  None:
-                next_err = errs[j]
-
-                length = j - last_err_idx
-                for k in range(last_err_idx, j):
-                    err = (k - last_err_idx)/length * next_err + \
-                          (j - k)/length * last_err
-                    self.new_poses[k,:] = self._gt_poses[k,:] + err
-
-                last_err = None
-
-        self.new_poses = utl.make_smooth(self.new_poses)
         self.plot_trajs()
 
-
-
-    def optimize_params(self):
-
-        sel = 50
-        err_deg = 8
-        self.err_deg = err_deg
-        self._L = self._times[-1]
-
-        # P = np.zeros((3,err_deg))
-        P = np.zeros((3,2*err_deg))
-        self.new_poses = self._gt_poses.copy()
-        for i in range(1000):
-            grad = np.zeros((3,2*err_deg))
-            # for j in range(self._gt_poses.shape[0]):
-            for j in np.arange(50,1200, 100):
-                if self._occlusion[j]: continue
-
-                Tcb = utl.make_DCM([90*np.pi/180, 0, 90*np.pi/180])
-                Tbi = utl.make_DCM(self._euls[j,:])
-                T = np.matmul(Tcb, Tbi)
-
-                # ts = self.Ts(self._times[j])
-                ts = self.COSs(self._times[j])
-                # print(np.matmul(P, ts).T[0])
-                X = self._gt_poses[j,:] + np.matmul(P, ts).T[0]
-
-                center = self._centers[j]*self._f - np.array([self.img_shape[1]/2, self.img_shape[0]/2])
-
-                xn_est = self.kin.reproject_single(self._drone_poses[j], X, self._smooth_eul[j], self.img_shape)
-                xn_est -= np.array([self.img_shape[1]/2, self.img_shape[0]/2])
-
-                Y = np.matmul( T, (X - self._drone_poses[j]) )
-
-                g = np.matmul( 2*(xn_est - center) , np.matmul(self.G_Y(Y) , T) )
-                g[2] = 0
-                # g = np.matmul( g, self.X_P(self._times[j]))
-                g = np.matmul( g, self.X_P_cos(self._times[j]))
-                grad = grad + g
-
-            for j in range(self._gt_poses.shape[0]):
-                # ts = self.Ts(self._times[j])
-                ts = self.COSs(self._times[j])
-                self.new_poses[j,:] = self._gt_poses[j,:] + np.matmul(P, ts).T[0]
-
-            P = P - 1e-5*grad
-            self.plot_trajs()
-
-            # print(P)
-            # ts = self.Ts(self._times[sel])
-            ts = self.COSs(self._times[j])
-            X = self._gt_poses[sel,:] + np.matmul(P, ts).ravel()
-            # print(X)
-            xn_est = self.kin.reproject_single(self._drone_poses[sel], X, self._smooth_eul[sel], self.img_shape)
-            xn_est -= np.array([self.img_shape[1]/2, self.img_shape[0]/2])
-
-            first_img = cv.imread(self.img_files[sel])
-            rect = (int(xn_est[0]+self.img_shape[1]/2)-1,int(xn_est[1]+self.img_shape[0]/2)-1,2,2)
-            cv.rectangle(first_img, rect, (0,255,255), 2)
-            rect = (int(self._centers[sel][0]*self._f)-1,int(self._centers[sel][1]*self._f)-1,2,2)
-            cv.rectangle(first_img, rect, (0,0,255), 2)
-            cv.imshow("image", first_img)
-            cv.waitKey(33)
-
-        # X = self._gt_poses
-        #
-        # for i in range(1000):
-        #     A, b = self.linearize()
-        #     de = self.solve(A,b)
-        #     self._gt_poses[:51] = self._gt_poses[:51] + de
-        #     print(self.loss(A,b,de))
-        #     print(de[30])
-
-
-    def optimize1(self):
-
-        # X = self._gt_poses
-        #
-        # for i in range(1000):
-        #     A, b = self.linearize()
-        #     de = self.solve(A,b)
-        #     self._gt_poses[:51] = self._gt_poses[:51] + de
-        #     print(self.loss(A,b,de))
-        #     print(de[30])
-        #
-        #     self.kin.reproject(self._drone_poses, self._gt_poses, utl.make_smooth(self._euls), self.img_files)
-
-        # i=1000
-        #
-        # de = np.zeros((3,1))
-        # for j in range(1000):
-        #     print(self._gt_poses[i])
-        #     G, b = self.linearize(i)
-        #     t = np.matmul(G,de) - b.reshape((2,1))
-        #     de = de + 0.2*np.matmul(G.T,t)
-        #     new_pos = self._gt_poses[i].reshape((3,1)) + de
-        #     self._gt_poses[i,0] = new_pos[0]
-        #     self._gt_poses[i,1] = new_pos[1]
-        #     self._gt_poses[i,2] = new_pos[2]
-        #
-        #     self.kin.reproject_single(self._drone_poses[i], self._gt_poses[i], utl.make_smooth(self._euls)[i], self.img_files[i])
-
-
-        # i=50
-        #
-        # de = np.zeros((3,1))
-        # for j in range(1000):
-        #     # print(self._gt_poses[i])
-        #     G, b = self.linearize(i)
-        #
-        #     xn_est = self.kin.reproject_single(self._drone_poses[i], self._gt_poses[i], utl.make_smooth(self._euls)[i], self.img_files[i])
-        #     xn_est = np.array( [val/self._f for val in xn_est] )
-        #     t = xn_est - self._centers[i]
-        #
-        #     diff = 2*np.matmul(G.T,t)
-        #     # new_pos = self._gt_poses[i] +
-        #     print(diff)
-        #     self._gt_poses[i,0] += diff[1]
-        #     self._gt_poses[i,1] -= diff[0]
-        #     self._gt_poses[i,2] += diff[2]
-        #
-        #     first_img = cv.imread(self.img_files[i])
-        #     rect = (int(xn_est[0]*self._f)-1,int(xn_est[1]*self._f)-1,2,2)
-        #     cv.rectangle(first_img, rect, (0,255,255), 2)
-        #     rect = (int(self._centers[i][0]*self._f)-1,int(self._centers[i][1]*self._f)-1,2,2)
-        #     cv.rectangle(first_img, rect, (0,0,255), 2)
-        #     cv.imshow("image", first_img)
-        #     cv.waitKey()
-
-        # self._i=50
-        # self._deg = 5
-        # X0 = np.array([self._gt_poses[self._i,0], self._gt_poses[self._i,1]])
-        # result = least_squares(self.loss, X0, diff_step=0.1, max_nfev=100000)
-        # print(result)
-
-        # for i in range(50, 2000):
-        #     if self._occlusion[i]: continue
-        #
-        #     self._i=i
-        #     self._deg = 5
-        #     X0 = np.array([self._gt_poses[self._i,0], self._gt_poses[self._i,1]])
-        #     result = least_squares(self.loss, X0, diff_step=0.1, max_nfev=100000)
-        #     print(result)
-        #
-        #     new_pos = self._gt_poses[self._i]
-        #     new_pos[0] = result.x[0]
-        #     new_pos[1] = result.x[1]
-        #
-        #     xn_est = self.kin.reproject_single(self._drone_poses[self._i], new_pos, self._smooth_eul[self._i], self.img_shape)
-        #     xn_est = np.array( [val/self._f for val in xn_est] )
-        #
-        #     first_img = cv.imread(self.img_files[self._i])
-        #     rect = (int(xn_est[0]*self._f)-1,int(xn_est[1]*self._f)-1,2,2)
-        #     cv.rectangle(first_img, rect, (0,255,255), 2)
-        #     rect = (int(self._centers[self._i][0]*self._f)-1,int(self._centers[self._i][1]*self._f)-1,2,2)
-        #     cv.rectangle(first_img, rect, (0,0,255), 2)
-        #     cv.imshow("image", first_img)
-        #     cv.waitKey(33)
-
-        self._i=50
-        self._deg = 2
-        X0 = np.zeros( (1,2*self._deg) )
-        # X0 = np.array( [[3, -6]] )
-        print(X0[0])
-        result = least_squares(self.loss1, X0[0], diff_step=10, max_nfev=100000)
-        # XL = -10*np.ones( (1,2*self._deg) )
-        # XU = 10*np.ones( (1,2*self._deg) )
-        # bounds = [(XL[0][i],XU[0][i]) for i in range(2*self._deg)]
-        # result = differential_evolution(self.loss1, bounds=bounds, maxiter=10000000, popsize=20,tol=1e-6)
-        self.plot_trajs()
-        print(result)
 
     def show(self):
 
@@ -650,8 +393,10 @@ class Optimizer:
 parser = argparse.ArgumentParser()
 parser.add_argument("folder_path", help="Path to data folder")
 parser.add_argument("gt_path", help="Path to target groundtruth positions")
-parser.add_argument("log_path", help="DJI log path")
+parser.add_argument("data_type", help="Data type is one of the following: 0 for mavic with gps groundtruth, \
+                                                                          1 for mavic with camera groundtruth,\
+                                                                          2 for tello in static configuration")
 args = parser.parse_args()
 
-opt = Optimizer(args.folder_path, args.gt_path, args.log_path)
+opt = Optimizer(args.folder_path, args.gt_path, int(args.data_type))
 opt.show()

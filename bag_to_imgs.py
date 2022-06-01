@@ -1,11 +1,42 @@
 #!/usr/bin/env python
 
-import cv2 as cv
 import numpy as np
 import os
 import shutil
 import argparse
+import sys
+import cv2 as cv
+import utils as utl
+import matplotlib.pyplot as plt
+import numpy.fft as fft
+sys.path.append('/opt/ros/kinetic/lib/python2.7/dist-packages')
+import rosbag
+from cv_bridge import CvBridge
 
+
+def get_frequency(values, ts):
+    ds = []
+    for i, t in enumerate(ts):
+        if i!=0:
+            ds.append(ts[i]-ts[i-1])
+    d = np.mean(ds)
+    print("sample distance: ", d)
+
+    spectrum = fft.fft(values)
+    freq = fft.fftfreq(len(spectrum),d=d)
+
+    idx = abs(freq) < 0.25
+    spectrum[idx] = 0
+
+    fig, ax = plt.subplots()
+    ax.plot(freq, abs(spectrum), linewidth=2)
+
+    peaks = freq[np.argmax(abs(spectrum))]
+    print("dominant frequency: ",abs(peaks))
+
+    plt.show()
+
+    return abs(peaks)
 
 def get_input_key(question, rect):
 
@@ -103,6 +134,7 @@ def write_ground_truth_box(dir,rect=None):
     if rect is None:
         ret = True
         rect = cv.selectROI(win_name,frame)
+
         if rect[2] <= 1:
             rect[2] = (rect[0], rect[1], 2, rect[3])
         if rect[3] <= 1:
@@ -124,120 +156,118 @@ def write_ground_truth_box(dir,rect=None):
     if ret:
         return rect
 
-def write_cam_stats(dir, num, start):
-    global data_lines
-
-    line = data_lines[num-start]
-    data = line.split(',')
-    img_num = int(data[0][5:].split('.')[0])
-
-    if img_num != num-1:
-        return False
+def write_cam_stats(dir, pos, eul, t):
 
     f = open(dir+"/camera_states.txt", "a")
-    f.write("{:s},{:s},{:s},{:s},{:s},{:s},{:s}".format(data[1],data[2],data[3],\
-                                                        data[4],data[5],data[6],data[7]))
+    f.write("{:.3f},{:.2f},{:.2f},{:.2f},{:.4f},{:.4f},{:.4f}\n".format(t,pos[0],pos[1],pos[2],\
+                                                                        eul[0],eul[1],eul[2]))
     f.close()
 
-    return True
+def write_test_config(target_dir):
 
-def write_test_config(target_dir, raw_dir):
-
-    src = raw_dir + "/test_config.txt"
-    dst = target_dir + "/test_config.txt"
-    shutil.copyfile(src, dst)
+    open(target_dir + "/test_config.txt", "w").close()
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("log_path", help="Path to the folder containing dji logs. \
-                                    (the one copied from android scanner app)")
+parser.add_argument("bag_file", help="Path to the bag file.")
 args = parser.parse_args()
 
-log_path = args.log_path
-skip_rate = 0
+bag_file = args.bag_file
+file_name = os.path.splitext(os.path.basename(bag_file))[0]
+
+bag = rosbag.Bag(bag_file)
+bridge = CvBridge()
 
 win_name = "dataset_creator"
 cv.namedWindow(win_name)
 cv.setMouseCallback(win_name, get_input_btn)
 
-_, folder_name = os.path.split(log_path)
-
-log_data_file = open(log_path + '/log.txt', 'r')
-data_lines = log_data_file.readlines()
-
 tracking_challenges = {"camera motion":0, "illum change":0, "occlusion":0, \
                        "motion change":0, "size change":0}
 btn_bar_corner = [0,0]
 
-files = [f for f in os.listdir(log_path) if os.path.isfile(os.path.join(log_path, f))]
-img_files = []
-for file in files:
-    if file.endswith(".jpg"):
-        img_files.append(file)
-number_of_imgs = len(img_files)
-if number_of_imgs == len(data_lines):
-    print("Number of images and log lines match. proceeding ...")
-else:
-    print("Number of images and log lines DO NOT match ({:d} images and {:d} lines). exiting ...".format(number_of_imgs, len(data_lines)))
-    exit()
+pitches = []
+ts = []
+t0 = 0
+for topic, msg, t in bag.read_messages(topics=['/tello/odom']):
 
-seq_dir = "dataset/custom_dataset1/"+folder_name
+    if topic == '/tello/odom':
+        ori = msg.pose.pose.orientation
+        roll, pitch, yaw = utl.quaternion_to_euler_angle(ori.w, ori.x, ori.y, ori.z)
+        pitches.append(pitch)
+        if len(ts)==0:
+            t0 = t.to_sec()
+        ts.append(t.to_sec()-t0)
+
+freq = get_frequency(pitches, ts)
+
+fig, ax = plt.subplots()
+ax.plot(ts, pitches, linewidth=2)
+plt.show()
+
+seq_dir = "dataset/custom_dataset1/cup_{:.1f}HZ".format(freq)
 if os.path.exists(seq_dir):
     shutil.rmtree(seq_dir)
 os.makedirs(seq_dir)
 
-write_test_config(seq_dir, log_path)
+write_test_config(seq_dir)
+static_cam_pos = [-1, 0, 0.35]
 
 tracker = cv.TrackerCSRT_create()
+# tracker = cv.Tracker_create("csrt")
 
-counter=1
+
 frame_counter=1
 start_img_num=None
-while True:
-    try:
-        frame = cv.imread(log_path + "/image{:d}.jpg".format(counter))
+odom_eul=None
+t0 = 0
+for topic, msg, t in bag.read_messages(topics=['/tello/odom','/tello/camera/image_raw']):
 
-        counter += 1
+    if t0==0:
+        t0 = t.to_sec()
 
-        if frame is None:
+    if topic == '/tello/odom':
+        ori = msg.pose.pose.orientation
+        roll, pitch, yaw = utl.quaternion_to_euler_angle(ori.w, ori.x, ori.y, ori.z)
+        odom_eul = [roll, pitch, yaw]
+
+
+    if topic == '/tello/camera/image_raw':
+
+        if odom_eul is None:
             continue
-        elif frame is not None and start_img_num is None:
-            start_img_num=counter
 
-    except:
-        if counter >= number_of_imgs:
-            print("End of images")
-        else:
-            print("Error reading " + log_path + "/image{:d}.jpg".format(counter))
+        frame = bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
+        frame = cv.resize(frame, (640,480))
 
-        break
+        if t.to_sec()-t0 < 0.5:
+            continue
+        # cv.imshow(win_name, frame)
+        # k = cv.waitKey()
+        # continue
 
-    if not write_cam_stats(seq_dir, counter, start_img_num):
-        print("Error finding log for " + log_path + "/image{:d}.jpg".format(counter-1))
-        break
-
-
-    if counter==start_img_num:
-        roi = write_ground_truth_box(seq_dir)
-        tracker.init(frame, roi)
-    else:
-        _, res = tracker.update(frame)
-        res = tuple( [int(val) for val in res] )
-        if get_input_key("rect is good.", res):
-            write_ground_truth_box(seq_dir, res)
-        else:
+        if frame_counter==1:
             roi = write_ground_truth_box(seq_dir)
-            tracker = cv.TrackerCSRT_create()
             tracker.init(frame, roi)
+        else:
+            _, res = tracker.update(frame)
+            res = tuple( [int(val) for val in res] )
+            if get_input_key("rect is good.", res):
+                write_ground_truth_box(seq_dir, res)
+            else:
+                roi = write_ground_truth_box(seq_dir)
+                tracker = cv.TrackerCSRT_create()
+                tracker.init(frame, roi)
 
-    wrtie_camera_motion(seq_dir, tracking_challenges["camera motion"])
-    wrtie_illum_change(seq_dir, tracking_challenges["illum change"])
-    wrtie_occlusion(seq_dir, tracking_challenges["occlusion"])
-    wrtie_motion_change(seq_dir, tracking_challenges["motion change"])
-    wrtie_size_change(seq_dir, tracking_challenges["size change"])
+        wrtie_camera_motion(seq_dir, tracking_challenges["camera motion"])
+        wrtie_illum_change(seq_dir, tracking_challenges["illum change"])
+        wrtie_occlusion(seq_dir, tracking_challenges["occlusion"])
+        wrtie_motion_change(seq_dir, tracking_challenges["motion change"])
+        wrtie_size_change(seq_dir, tracking_challenges["size change"])
+        write_cam_stats(seq_dir, static_cam_pos, odom_eul, t.to_sec())
 
-    # TODO: write camera and target positions to log file
+        # TODO: write camera and target positions to log file
 
-    img_name = seq_dir + "/" + "{:08d}".format(frame_counter) + ".jpg"
-    cv.imwrite(img_name, frame)
-    frame_counter += 1
+        img_name = seq_dir + "/" + "{:08d}".format(frame_counter) + ".jpg"
+        cv.imwrite(img_name, frame)
+        frame_counter += 1
