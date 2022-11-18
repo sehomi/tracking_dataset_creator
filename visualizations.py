@@ -16,7 +16,20 @@ import utils as utl
 
 import contextily as cx
 
+import sys
+try:
+  import google.colab
+  IN_COLAB = True
+except:
+  IN_COLAB = False
 
+if IN_COLAB:
+    # print("**** in colab ****")
+    if "/content/tracking_dataset_creator" not in sys.path:
+        # print("**** path not set ****")
+        sys.path.insert(0, "/content/tracking_dataset_creator")
+        # print(sys.path)
+        
 class Position3DVisualizer:
 
     def __init__(self, path, gt_path, plot_type='ERR'):
