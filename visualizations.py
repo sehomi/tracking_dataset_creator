@@ -1,5 +1,22 @@
 #!/usr/bin/env python
 
+import sys
+try:
+  import google.colab
+  IN_COLAB = True
+except:
+  IN_COLAB = False
+
+if IN_COLAB:
+    print("**** in colab ****")
+    if "/content/tracking_dataset_creator" not in sys.path:
+        sys.path.insert(0, "/content/tracking_dataset_creator")
+
+    if "/content/tracking_dataset_creator/CSENDistance" not in sys.path:
+        sys.path.insert(0, "/content/tracking_dataset_creator/CSENDistance")
+    
+    print(sys.path)
+
 import os
 import numpy as np
 from numpy import genfromtxt
@@ -16,27 +33,15 @@ import utils as utl
 
 import contextily as cx
 
-import sys
-try:
-  import google.colab
-  IN_COLAB = True
-except:
-  IN_COLAB = False
-
-if IN_COLAB:
-    # print("**** in colab ****")
-    if "/content/tracking_dataset_creator" not in sys.path:
-        # print("**** path not set ****")
-        sys.path.insert(0, "/content/tracking_dataset_creator")
-        # print(sys.path)
         
 class Position3DVisualizer:
 
-    def __init__(self, path, gt_path, plot_type='ERR'):
+    def __init__(self, path, gt_path, plot_type='ERR', csen_pkg_path=''):
 
         self.path = path
 
         img_files = utl.get_dataset_imgs(path)
+        self._img_files = img_files
         num_imgs = len(img_files)
         self.img_shape = cv.imread(img_files[0]).shape
         self._gt_boxes = genfromtxt(path+"/groundtruth.txt", delimiter=',')
@@ -64,11 +69,13 @@ class Position3DVisualizer:
         self._gt_poses = self._gt_poses[0:sub_idxs.shape[0]]
         self._gt_poses_with_alt = self._gt_poses_with_alt[0:sub_idxs.shape[0]]
         self._drone_poses = drone_poses[sub_idxs]
+        self._img_files = [self._img_files[idx] for idx in sub_idxs]
         self._gt_boxes = self._gt_boxes[sub_idxs]
 
         self.kin = CameraKinematics(66, vis=False)
-        self._re = RangeEstimator([self.img_shape[1],self.img_shape[0]], method='direct')
+        self._re = RangeEstimator([self.img_shape[1],self.img_shape[0]], method='direct_fcn')
         self._re_level = RangeEstimator([self.img_shape[1],self.img_shape[0]], method='proportionality')
+        self._re_csen = RangeEstimator([self.img_shape[1],self.img_shape[0]], method='direct_csen', csen_pkg_path=csen_pkg_path)
 
         assert plot_type in ['3D', '2D', 'ERR', 'NONE']
         self.plot_type = plot_type
@@ -146,9 +153,11 @@ class Position3DVisualizer:
     def plot_range_errs(self):
         self.ax_2d.plot(range(self._gt_poses_level.shape[0]), np.linalg.norm(self._gt_poses_level[:,0:2]-self._gt_poses_with_alt[:,0:2], axis=1), color=(1,0.64,0), linewidth=2, label='Level assumption')
         self.ax_2d.plot(range(self._gt_poses_with_range.shape[0]), np.linalg.norm(self._gt_poses_with_range[:,0:2]-self._gt_poses_with_alt[:,0:2], axis=1), linewidth=2, label='Range estimation')
+        self.ax_2d.plot(range(self._gt_poses_with_range_csen.shape[0]), np.linalg.norm(self._gt_poses_with_range_csen[:,0:2]-self._gt_poses_with_alt[:,0:2], axis=1), linewidth=2, label='Range estimation CSEN')
 
         self.ax_2d_1.plot(range(self._gt_poses_level.shape[0]), np.abs(self._gt_poses_level[:,2]-self._gt_poses_with_alt[:,2]), color=(1,0.64,0), linewidth=2, label='Level assumption')
         self.ax_2d_1.plot(range(self._gt_poses_with_range.shape[0]), np.abs(self._gt_poses_with_range[:,2]-self._gt_poses_with_alt[:,2]), linewidth=2, label='Range estimation')
+        self.ax_2d_1.plot(range(self._gt_poses_with_range_csen.shape[0]), np.abs(self._gt_poses_with_range_csen[:,2]-self._gt_poses_with_alt[:,2]), linewidth=2, label='Range estimation CSEN')
 
         self.ax_2d.set_xlabel('Frame Counter')
         self.ax_2d.set_ylabel('Horizontal Position Error (m)')
@@ -172,16 +181,18 @@ class Position3DVisualizer:
         self.new_poses = self._gt_poses.copy()
 
         self._gt_poses_with_range = []
+        self._gt_poses_with_range_csen = []
         self._gt_poses_level = []
         for i,box in enumerate(self._gt_boxes):
             direction = self._gt_poses_with_alt[i]-self._drone_poses[i]
             direction = direction/np.linalg.norm(direction)
-            self._gt_poses_with_range.append( self._re.findPos(box, direction, self._drone_poses[i,2]) + self._drone_poses[i] )
-            self._gt_poses_level.append( self._re_level.findPos(box, direction, self._drone_poses[i,2]) + self._drone_poses[i] )
-
+            self._gt_poses_with_range.append( self._re.findPos(self._img_files[i], box, direction, self._drone_poses[i,2]) + self._drone_poses[i] )
+            self._gt_poses_level.append( self._re_level.findPos(self._img_files[i], box, direction, self._drone_poses[i,2]) + self._drone_poses[i] )
+            self._gt_poses_with_range_csen.append( self._re_csen.findPos(self._img_files[i], box, direction, self._drone_poses[i,2]) + self._drone_poses[i] )
 
         self._gt_poses_with_range = np.array(self._gt_poses_with_range)
         self._gt_poses_level = np.array(self._gt_poses_level)
+        self._gt_poses_with_range_csen = np.array(self._gt_poses_with_range_csen)
 
         if visualize:
             # self.plot_trajs_2d()
@@ -192,6 +203,7 @@ class Position3DVisualizer:
 parser = argparse.ArgumentParser()
 parser.add_argument("folder_path", help="Path to data folder")
 parser.add_argument("gt_path", help="Path to target groundtruth positions")
+parser.add_argument("csen_path", help="Path to CSENDistance package")
 
 args = parser.parse_args()
 
@@ -200,6 +212,7 @@ args = parser.parse_args()
 acts = []
 ests = []
 ests1 = []
+ests2 = []
 
 for i in range(1,8):
     # del opt
@@ -216,16 +229,18 @@ for i in range(1,8):
     folder_path = ''.join(folder_path)
     gt_path = ''.join(gt_path)
     print(folder_path, gt_path)
-    opt = Position3DVisualizer(folder_path, gt_path, plot_type='NONE')
+    opt = Position3DVisualizer(folder_path, gt_path, plot_type='NONE', csen_pkg_path=args.csen_path)
     opt.to3D()
 
     act = np.linalg.norm(opt._gt_poses_with_alt[:]-opt._drone_poses[:], axis=1)
     est = np.linalg.norm(opt._gt_poses_level[:]-opt._drone_poses[:], axis=1)
     est1 = np.linalg.norm(opt._gt_poses_with_range[:]-opt._drone_poses[:], axis=1)
+    est2 = np.linalg.norm(opt._gt_poses_with_range_csen[:]-opt._drone_poses[:], axis=1)
 
     acts.append(act)
     ests.append(est)
     ests1.append(est1)
+    ests2.append(est2)
 
 plt.rcParams["figure.figsize"] = (5,5)
 fig, ax = plt.subplots()
@@ -235,13 +250,15 @@ ax.plot([0,30], [0,30], color='red', linewidth=2)
 acts = np.hstack(acts)
 ests = np.hstack(ests)
 ests1 = np.hstack(ests1)
+ests2 = np.hstack(ests2)
 
 
 ax.scatter(acts, ests, color='blue', s=4)
 ax.scatter(acts, ests1, color='orange', s=4)
+ax.scatter(acts, ests2, color='green', s=4)
 
 std = np.std(ests-acts)
-ax.fill_between(np.arange(0,30), np.arange(0,30)+std, np.arange(0,30)-std, color='red', alpha=0.3)
+ax.fill_between(np.arange(0,31), np.arange(0,31)+std, np.arange(0,31)-std, color='red', alpha=0.3)
 
 ax.set_xlabel('Actual Distance (m)')
 ax.set_ylabel('Estimated Distance (m)')
@@ -252,4 +269,4 @@ ax.set_ylim([0,30])
 ax.legend()
 ax.grid()
 
-plt.show()
+plt.savefig('scatter.pdf', format='pdf')

@@ -14,7 +14,7 @@ from CSENDistance.csen_regressor import model
 
 class RangeEstimator:
 
-    def __init__(self, img_size, method='direct', direct_mode='normal', margin=20):
+    def __init__(self, img_size, method='direct_fcn', direct_mode='normal', csen_pkg_path='', margin=20):
 
         assert method in ['proportionality', 'direct_fcn', 'direct_csen']
         assert direct_mode in ['normal', 'oblique']
@@ -27,12 +27,13 @@ class RangeEstimator:
         self.img_h = img_size[1]
         self.margin = margin
         self.last_z = None
+        self.noise_mag = 0.2
 
         if method == 'direct_fcn':
             self.loadFCNModel()
 
         elif method == 'direct_csen':
-            self.loadCSENModel()
+            self.loadCSENModel(csen_pkg_path)
 
     def loadFCNModel(self):
 
@@ -119,7 +120,7 @@ class RangeEstimator:
 
         return x_test
 
-    def loadCSENModel(self):
+    def loadCSENModel(self, pkg_path=''):
 
         modelType = 'CSEN'
         feature_type = 'VGG19'
@@ -127,7 +128,7 @@ class RangeEstimator:
 
         MR = '0.5'
 
-        weightsDir = 'weights/' + modelType + '/'
+        weightsDir = pkg_path + '/weights/' + modelType + '/'
 
         self.modelFold = model.model()
             
@@ -136,7 +137,7 @@ class RangeEstimator:
         # Testing and performance evaluations.
         self.modelFold.load_weights(weightPath)
 
-        self.data = scipy.io.loadmat('CSENdata-2D/VGG19_mr_0.5_run1.mat')
+        self.data = scipy.io.loadmat(pkg_path + '/CSENdata-2D/VGG19_mr_0.5_run1.mat')
 
         self.scaler = self.formScaler()
 
@@ -181,26 +182,36 @@ class RangeEstimator:
             return y_pred2[0][0]
 
         elif self.method == 'direct_csen':
-            pass
 
-    def findPos(self, rect, direction, z, cls='person'):
+            x1 = int(rect[0])
+            y1 = int(rect[1])
+            x2 = int(rect[0]+rect[2])
+            y2 = int(rect[1]+rect[3])
+
+            fts = self.preprocess(image, [x1,y1,x2,y1,x2,y2,x1,y2], self.scaler)
+            y_pred = self.modelFold.model.predict(fts, verbose = 0)
+
+            return y_pred[0][0]
+
+    def findPos(self, image, rect, direction, z, cls='person'):
         assert cls == 'person'
 
         pos = None
-        if self.method == 'direct':
+        if 'direct' in self.method:
             if self.isDistantFromBoundary(rect):
-            
-                rng = self.findRange(rect, None)
+                rng = self.findRange(rect, image)
                 pos = rng*direction
+
+                self.last_z = np.abs(pos[2])
             else:
                 if self.last_z is not None:
-                    pos = self.scale_vector(direction, self.last_z)
+                    noise = (np.random.randn()*self.noise_mag) - self.noise_mag/2
+                    pos = self.scale_vector(direction, self.last_z + noise)
                 else:
                     pos = self.scale_vector(direction, z)
 
         elif self.method == 'proportionality':
-            pos = self.scale_vector(direction, z)
-
-        self.last_z = np.abs(pos[2])
+            noise = (np.random.randn()*self.noise_mag) - self.noise_mag/2
+            pos = self.scale_vector(direction, z + noise)
 
         return pos
