@@ -100,7 +100,7 @@ class RangeEstimator:
         function_name = 'tf.keras.applications.' + ('VGG19')[:8].lower() + '.preprocess_input'
         Object = eval(function_name + '(Object)')
     
-        f = model.predict(Object)
+        f = model.predict(Object, verbose=0)
 
         f = np.transpose(f).astype(np.double)
 
