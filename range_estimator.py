@@ -5,18 +5,27 @@ import argparse
 import os
 import scipy.io
 import cv2 as cv
+from mmcv import Config
+
+import torch
 
 import tensorflow as tf
 from keras.models import model_from_json
 from sklearn.preprocessing import StandardScaler
 
-from CSENDistance.csen_regressor import model
+from CSENDistance.csen_regressor import mdl
+
+from mono.model.registry import MONO
+from mono.model.mono_baseline.layers import disp_to_depth
+from mono.datasets.utils import readlines
+from mono.datasets.kitti_dataset import KITTIRAWDataset
 
 class RangeEstimator:
 
-    def __init__(self, img_size, method='direct_fcn', direct_mode='normal', csen_pkg_path='', margin=20):
+    def __init__(self, img_size, method='direct_fcn', direct_mode='normal', \
+                 csen_pkg_path='', gcn_pkg_path='', margin=20):
 
-        assert method in ['proportionality', 'direct_fcn', 'direct_csen']
+        assert method in ['proportionality', 'direct_fcn', 'direct_csen', 'direct_gcn']
         assert direct_mode in ['normal', 'oblique']
         assert len(img_size) >= 2
 
@@ -34,6 +43,35 @@ class RangeEstimator:
 
         elif method == 'direct_csen':
             self.loadCSENModel(csen_pkg_path)
+
+        elif method == 'direct_gcn':
+            self.loadGCNModel(gcn_pkg_path)
+            self.MIN_DEPTH=1e-3
+            self.MAX_DEPTH=80
+            self.SCALE = 36
+
+
+    def transform(self, cv2_img, height=320, width=1024):
+      im_tensor = torch.from_numpy(cv2_img.astype(np.float32)).cuda().unsqueeze(0)
+      im_tensor = im_tensor.permute(0, 3, 1, 2).contiguous()
+      im_tensor = torch.nn.functional.interpolate(im_tensor, [height, width],mode='bilinear', align_corners=False)
+      im_tensor /= 255
+      return im_tensor
+
+    def loadGCNModel(self, pkg_path):
+
+      cfg_path = pkg_path + '/config/cfg_kitti_fm.py'
+      model_path = pkg_path + '/weights/epoch_20.pth'
+
+      cfg = Config.fromfile(cfg_path)
+      cfg['model']['depth_pretrained_path'] = None
+      cfg['model']['pose_pretrained_path'] = None
+      cfg['model']['extractor_pretrained_path'] = None
+      self.model = MONO.module_dict[cfg.model['name']](cfg.model)
+      checkpoint = torch.load(model_path)
+      self.model.load_state_dict(checkpoint['state_dict'], strict=True)
+      self.model.cuda()
+      self.model.eval()
 
     def loadFCNModel(self):
 
@@ -130,7 +168,7 @@ class RangeEstimator:
 
         weightsDir = pkg_path + '/weights/' + modelType + '/'
 
-        self.modelFold = model.model()
+        self.modelFold = mdl.model()
             
         weightPath = weightsDir + feature_type + '_' + MR + '_' + str(1) + '.h5'
 
@@ -193,6 +231,31 @@ class RangeEstimator:
 
             return y_pred[0][0]
 
+        elif self.method == 'direct_gcn':
+
+            img = cv.cvtColor(image, cv.COLOR_BGR2RGB)
+            original_height, original_width = img.shape[:2]
+            im_tensor = self.transform(img)
+
+            with torch.no_grad():
+              input = {}
+              input['color_aug', 0, 0] = im_tensor
+              outputs = self.model(input)
+
+            disp = outputs[("disp", 0, 0)]
+            disp_resized = torch.nn.functional.interpolate(disp, (original_height, original_width), mode="bilinear", align_corners=False)
+            min_disp = 1/self.MAX_DEPTH
+            max_disp = 1/self.MIN_DEPTH
+            depth = 1/(disp_resized.squeeze().cpu().numpy()*max_disp + min_disp) * self.SCALE
+
+            x1 = int(rect[0])
+            y1 = int(rect[1])
+            x2 = int(rect[0]+rect[2])
+            y2 = int(rect[1]+rect[3])
+
+            return np.mean(depth[y1:y2, x1:x2])
+            # return depth, disp_resized.squeeze().cpu().numpy()
+
     def findPos(self, image, rect, direction, z, cls='person'):
         assert cls == 'person'
 
@@ -215,3 +278,13 @@ class RangeEstimator:
             pos = self.scale_vector(direction, z + noise)
 
         return pos
+
+
+if __name__ == "__main__":
+
+  img = cv.imread('/content/tracking_dataset_creator/GCNDepth/3_.jpeg')
+  re = RangeEstimator(img.shape[:2], method='direct_gcn', direct_mode='normal', gcn_pkg_path='/content/tracking_dataset_creator/GCNDepth')
+  depth, disp_resized = re.findRange(None, img)
+  vmax = np.percentile(disp_resized, 95)
+  import matplotlib.pyplot as plt
+  plt.imsave('/content/tracking_dataset_creator/GCNDepth/out_re.png', disp_resized, cmap='magma', vmax=vmax)

@@ -14,6 +14,9 @@ if IN_COLAB:
 
     if "/content/tracking_dataset_creator/CSENDistance" not in sys.path:
         sys.path.insert(0, "/content/tracking_dataset_creator/CSENDistance")
+
+    if "/content/tracking_dataset_creator/GCNDepth" not in sys.path:
+      sys.path.insert(0, "/content/tracking_dataset_creator/GCNDepth")
     
     print(sys.path)
 
