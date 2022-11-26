@@ -13,7 +13,7 @@ import tensorflow as tf
 from keras.models import model_from_json
 from sklearn.preprocessing import StandardScaler
 
-from CSENDistance.csen_regressor import mdl
+import CSENDistance.csen_regressor.model as  mdl
 
 from mono.model.registry import MONO
 from mono.model.mono_baseline.layers import disp_to_depth
@@ -233,7 +233,8 @@ class RangeEstimator:
 
         elif self.method == 'direct_gcn':
 
-            img = cv.cvtColor(image, cv.COLOR_BGR2RGB)
+            img = cv.imread(image)
+            img = cv.cvtColor(img, cv.COLOR_BGR2RGB)
             original_height, original_width = img.shape[:2]
             im_tensor = self.transform(img)
 
@@ -284,7 +285,8 @@ if __name__ == "__main__":
 
   img = cv.imread('/content/tracking_dataset_creator/GCNDepth/3_.jpeg')
   re = RangeEstimator(img.shape[:2], method='direct_gcn', direct_mode='normal', gcn_pkg_path='/content/tracking_dataset_creator/GCNDepth')
-  depth, disp_resized = re.findRange(None, img)
-  vmax = np.percentile(disp_resized, 95)
-  import matplotlib.pyplot as plt
-  plt.imsave('/content/tracking_dataset_creator/GCNDepth/out_re.png', disp_resized, cmap='magma', vmax=vmax)
+  print(re.findRange([100,100,100,100], img))
+  # depth, disp_resized = re.findRange(None, img)
+  # vmax = np.percentile(disp_resized, 95)
+  # import matplotlib.pyplot as plt
+  # plt.imsave('/content/tracking_dataset_creator/GCNDepth/out_re.png', disp_resized, cmap='magma', vmax=vmax)

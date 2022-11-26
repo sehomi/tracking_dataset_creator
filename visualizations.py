@@ -29,6 +29,8 @@ import cv2 as cv
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from scipy.optimize import least_squares, differential_evolution
+from tqdm import tqdm
+import pandas as pd
 
 from camera_kinematics import CameraKinematics
 from range_estimator import RangeEstimator
@@ -39,7 +41,7 @@ import contextily as cx
         
 class Position3DVisualizer:
 
-    def __init__(self, path, gt_path, plot_type='ERR', csen_pkg_path=''):
+    def __init__(self, path, gt_path, plot_type='ERR', csen_pkg_path='', gcn_pkg_path=''):
 
         self.path = path
 
@@ -79,6 +81,7 @@ class Position3DVisualizer:
         self._re = RangeEstimator([self.img_shape[1],self.img_shape[0]], method='direct_fcn')
         self._re_level = RangeEstimator([self.img_shape[1],self.img_shape[0]], method='proportionality')
         self._re_csen = RangeEstimator([self.img_shape[1],self.img_shape[0]], method='direct_csen', csen_pkg_path=csen_pkg_path)
+        self._re_gcn = RangeEstimator([self.img_shape[1],self.img_shape[0]], method='direct_gcn', gcn_pkg_path=gcn_pkg_path)
 
         assert plot_type in ['3D', '2D', 'ERR', 'NONE']
         self.plot_type = plot_type
@@ -157,10 +160,12 @@ class Position3DVisualizer:
         self.ax_2d.plot(range(self._gt_poses_level.shape[0]), np.linalg.norm(self._gt_poses_level[:,0:2]-self._gt_poses_with_alt[:,0:2], axis=1), color=(1,0.64,0), linewidth=2, label='Level assumption')
         self.ax_2d.plot(range(self._gt_poses_with_range.shape[0]), np.linalg.norm(self._gt_poses_with_range[:,0:2]-self._gt_poses_with_alt[:,0:2], axis=1), linewidth=2, label='Range estimation')
         self.ax_2d.plot(range(self._gt_poses_with_range_csen.shape[0]), np.linalg.norm(self._gt_poses_with_range_csen[:,0:2]-self._gt_poses_with_alt[:,0:2], axis=1), linewidth=2, label='Range estimation CSEN')
+        self.ax_2d.plot(range(self._gt_poses_with_range_gcn.shape[0]), np.linalg.norm(self._gt_poses_with_range_gcn[:,0:2]-self._gt_poses_with_alt[:,0:2], axis=1), linewidth=2, label='Range estimation GCN')
 
         self.ax_2d_1.plot(range(self._gt_poses_level.shape[0]), np.abs(self._gt_poses_level[:,2]-self._gt_poses_with_alt[:,2]), color=(1,0.64,0), linewidth=2, label='Level assumption')
         self.ax_2d_1.plot(range(self._gt_poses_with_range.shape[0]), np.abs(self._gt_poses_with_range[:,2]-self._gt_poses_with_alt[:,2]), linewidth=2, label='Range estimation')
         self.ax_2d_1.plot(range(self._gt_poses_with_range_csen.shape[0]), np.abs(self._gt_poses_with_range_csen[:,2]-self._gt_poses_with_alt[:,2]), linewidth=2, label='Range estimation CSEN')
+        self.ax_2d_1.plot(range(self._gt_poses_with_range_gcn.shape[0]), np.abs(self._gt_poses_with_range_gcn[:,2]-self._gt_poses_with_alt[:,2]), linewidth=2, label='Range estimation GCN')
 
         self.ax_2d.set_xlabel('Frame Counter')
         self.ax_2d.set_ylabel('Horizontal Position Error (m)')
@@ -176,7 +181,8 @@ class Position3DVisualizer:
         self.ax_2d_1.grid()
         self.ax_2d_1.set_xlim([0,self._gt_poses_level.shape[0]])
 
-        plt.show()
+        # plt.show()
+        plt.savefig('range_errs.pdf', format='PDF')
 
 
     def to3D(self, visualize=False):
@@ -185,33 +191,76 @@ class Position3DVisualizer:
 
         self._gt_poses_with_range = []
         self._gt_poses_with_range_csen = []
+        self._gt_poses_with_range_gcn = []
         self._gt_poses_level = []
-        for i,box in enumerate(self._gt_boxes):
+        for i in tqdm(range(self._gt_boxes.shape[0])):
+            box = self._gt_boxes[i].copy()
             direction = self._gt_poses_with_alt[i]-self._drone_poses[i]
             direction = direction/np.linalg.norm(direction)
             self._gt_poses_with_range.append( self._re.findPos(self._img_files[i], box, direction, self._drone_poses[i,2]) + self._drone_poses[i] )
             self._gt_poses_level.append( self._re_level.findPos(self._img_files[i], box, direction, self._drone_poses[i,2]) + self._drone_poses[i] )
             self._gt_poses_with_range_csen.append( self._re_csen.findPos(self._img_files[i], box, direction, self._drone_poses[i,2]) + self._drone_poses[i] )
+            self._gt_poses_with_range_gcn.append( self._re_gcn.findPos(self._img_files[i], box, direction, self._drone_poses[i,2]) + self._drone_poses[i] )
 
         self._gt_poses_with_range = np.array(self._gt_poses_with_range)
         self._gt_poses_level = np.array(self._gt_poses_level)
         self._gt_poses_with_range_csen = np.array(self._gt_poses_with_range_csen)
+        self._gt_poses_with_range_gcn = np.array(self._gt_poses_with_range_gcn)
+
+        self.dump_to_file()
 
         if visualize:
             # self.plot_trajs_2d()
             # self.plot_trajs()
             self.plot_range_errs()
 
+    def dump_to_file(self):
+
+      # df = pd.DataFrame({'level' : self._gt_poses_level, 'fcn' : self._gt_poses_with_range,
+      #                    'csen': self._gt_poses_with_range_csen, 'gcn': self._gt_poses_with_range_gcn}, index=0)
+      # name = os.path.basename(os.path.normpath(self.path))
+      # df.to_csv("{}.csv".format(name), index=False)
+
+      con = np.concatenate((self._gt_poses_level, self._gt_poses_with_range,\
+                            self._gt_poses_with_range_csen, self._gt_poses_with_range_gcn), axis=1)
+      name = os.path.basename(os.path.normpath(self.path))
+      np.savetxt("{}.csv".format(name), con, delimiter=",")
+
+    def read_from_file(self, visualize=True):
+
+      # name = os.path.basename(os.path.normpath(self.path))
+      # df = pd.read_csv("{}.csv".format(name))
+
+      name = os.path.basename(os.path.normpath(self.path))
+      data = np.genfromtxt("{}.csv".format(name), delimiter=',')
+
+      self._gt_poses_with_range = data[:,3:6]
+      self._gt_poses_with_range_csen = data[:,6:9]
+      self._gt_poses_with_range_gcn = data[:,9:12]
+      self._gt_poses_level = data[:,0:3]
+
+      # print(self._gt_poses_level)
+
+      if visualize:
+            # self.plot_trajs_2d()
+            # self.plot_trajs()
+            self.plot_range_errs()
 
 parser = argparse.ArgumentParser()
 parser.add_argument("folder_path", help="Path to data folder")
 parser.add_argument("gt_path", help="Path to target groundtruth positions")
 parser.add_argument("csen_path", help="Path to CSENDistance package")
+parser.add_argument("gcn_path", help="Path to GCNDepth package")
 
 args = parser.parse_args()
 
-# opt = Position3DVisualizer(args.folder_path, args.gt_path)
+opt = Position3DVisualizer(args.folder_path, args.gt_path, plot_type='ERR', \
+                           csen_pkg_path=args.csen_path , gcn_pkg_path=args.gcn_path)
 # opt.to3D()
+opt.read_from_file(visualize=True)
+
+exit()
+
 acts = []
 ests = []
 ests1 = []
