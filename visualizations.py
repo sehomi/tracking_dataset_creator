@@ -254,12 +254,12 @@ parser.add_argument("gcn_path", help="Path to GCNDepth package")
 
 args = parser.parse_args()
 
-opt = Position3DVisualizer(args.folder_path, args.gt_path, plot_type='ERR', \
-                           csen_pkg_path=args.csen_path , gcn_pkg_path=args.gcn_path)
+# opt = Position3DVisualizer(args.folder_path, args.gt_path, plot_type='ERR', \
+#                            csen_pkg_path=args.csen_path , gcn_pkg_path=args.gcn_path)
 # opt.to3D()
-opt.read_from_file(visualize=True)
+# opt.read_from_file(visualize=True)
 
-exit()
+# exit()
 
 acts = []
 ests = []
@@ -281,7 +281,8 @@ for i in range(1,8):
     folder_path = ''.join(folder_path)
     gt_path = ''.join(gt_path)
     print(folder_path, gt_path)
-    opt = Position3DVisualizer(folder_path, gt_path, plot_type='NONE', csen_pkg_path=args.csen_path)
+    opt = Position3DVisualizer(folder_path, gt_path, plot_type='NONE', \
+                              csen_pkg_path=args.csen_path , gcn_pkg_path=args.gcn_path)
     opt.to3D()
 
     act = np.linalg.norm(opt._gt_poses_with_alt[:]-opt._drone_poses[:], axis=1)
