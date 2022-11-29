@@ -158,12 +158,12 @@ class Position3DVisualizer:
 
     def plot_range_errs(self):
         self.ax_2d.plot(range(self._gt_poses_level.shape[0]), np.linalg.norm(self._gt_poses_level[:,0:2]-self._gt_poses_with_alt[:,0:2], axis=1), color=(1,0.64,0), linewidth=2, label='Level assumption')
-        self.ax_2d.plot(range(self._gt_poses_with_range.shape[0]), np.linalg.norm(self._gt_poses_with_range[:,0:2]-self._gt_poses_with_alt[:,0:2], axis=1), linewidth=2, label='Range estimation')
+        self.ax_2d.plot(range(self._gt_poses_with_range.shape[0]), np.linalg.norm(self._gt_poses_with_range[:,0:2]-self._gt_poses_with_alt[:,0:2], axis=1), linewidth=2, label='Range estimation FCN')
         self.ax_2d.plot(range(self._gt_poses_with_range_csen.shape[0]), np.linalg.norm(self._gt_poses_with_range_csen[:,0:2]-self._gt_poses_with_alt[:,0:2], axis=1), linewidth=2, label='Range estimation CSEN')
         self.ax_2d.plot(range(self._gt_poses_with_range_gcn.shape[0]), np.linalg.norm(self._gt_poses_with_range_gcn[:,0:2]-self._gt_poses_with_alt[:,0:2], axis=1), linewidth=2, label='Range estimation GCN')
 
         self.ax_2d_1.plot(range(self._gt_poses_level.shape[0]), np.abs(self._gt_poses_level[:,2]-self._gt_poses_with_alt[:,2]), color=(1,0.64,0), linewidth=2, label='Level assumption')
-        self.ax_2d_1.plot(range(self._gt_poses_with_range.shape[0]), np.abs(self._gt_poses_with_range[:,2]-self._gt_poses_with_alt[:,2]), linewidth=2, label='Range estimation')
+        self.ax_2d_1.plot(range(self._gt_poses_with_range.shape[0]), np.abs(self._gt_poses_with_range[:,2]-self._gt_poses_with_alt[:,2]), linewidth=2, label='Range estimation FCN')
         self.ax_2d_1.plot(range(self._gt_poses_with_range_csen.shape[0]), np.abs(self._gt_poses_with_range_csen[:,2]-self._gt_poses_with_alt[:,2]), linewidth=2, label='Range estimation CSEN')
         self.ax_2d_1.plot(range(self._gt_poses_with_range_gcn.shape[0]), np.abs(self._gt_poses_with_range_gcn[:,2]-self._gt_poses_with_alt[:,2]), linewidth=2, label='Range estimation GCN')
 
@@ -254,12 +254,12 @@ parser.add_argument("gcn_path", help="Path to GCNDepth package")
 
 args = parser.parse_args()
 
-# opt = Position3DVisualizer(args.folder_path, args.gt_path, plot_type='ERR', \
-#                            csen_pkg_path=args.csen_path , gcn_pkg_path=args.gcn_path)
+opt = Position3DVisualizer(args.folder_path, args.gt_path, plot_type='ERR', \
+                           csen_pkg_path=args.csen_path , gcn_pkg_path=args.gcn_path)
 # opt.to3D()
-# opt.read_from_file(visualize=True)
+opt.read_from_file(visualize=True)
 
-# exit()
+exit()
 
 ests = {'act':[],'level':[],'fcn':[],'csen':[],'gcn':[]}
 
@@ -315,7 +315,7 @@ def scatter_plot(act, est, name):
   
   sort_idxs = np.argsort( np.abs(est-act) )
   
-  sort_idxs = np.delete(sort_idxs, np.random.choice(range(700), size=650, replace=False)) 
+  sort_idxs = np.delete(sort_idxs, np.random.choice(range(1000), size=900, replace=False)) 
   est = est[sort_idxs]
   act = act[sort_idxs]
 
@@ -327,8 +327,8 @@ def scatter_plot(act, est, name):
   ax.legend()
   ax.grid()
 
-  ax.arrow(x=17, y=17, dx=0, dy=-rms, color='red')
-  ax.text(17, 10, 'RMS = {:.1f}'.format(rms), color='red')
+  ax.arrow(x=15, y=15, dx=0, dy=rms, color= 'black', linewidth=2.5, head_width=0.3)
+  ax.text(16, 20, 'RMS = {:.1f}'.format(rms), color= 'black', weight='bold')
 
   ax.set_xlabel('Actual Distance (m)')
   ax.set_ylabel('Estimated Distance (m)')

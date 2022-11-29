@@ -283,8 +283,16 @@ class RangeEstimator:
 
 if __name__ == "__main__":
 
-  img = cv.imread('/content/tracking_dataset_creator/GCNDepth/3_.jpeg')
-  re = RangeEstimator(img.shape[:2], method='direct_gcn', direct_mode='normal', gcn_pkg_path='/content/tracking_dataset_creator/GCNDepth')
+  img_hor = cv.imread('/content/tracking_dataset_creator/GCNDepth/3_.jpeg')
+  img_tbl = cv.imread('/content/tracking_dataset_creator/dataset/VIOT/cup_0.5HZ/00000005.jpg')
+  img_obl = cv.imread('/content/tracking_dataset_creator/dataset/VIOT/park_mavic_1/00000035.jpg')
+  img_obl1 = cv.imread('/content/tracking_dataset_creator/dataset/VIOT/park_mavic_6/00000177.jpg')
+
+  _re = RangeEstimator([ img_shape[1], img_shape[0]], method='direct_fcn')
+  _re_level = RangeEstimator([ img_shape[1], img_shape[0]], method='proportionality')
+  _re_csen = RangeEstimator([ img_shape[1], img_shape[0]], method='direct_csen', csen_pkg_path=csen_pkg_path)
+  _re_gcn = RangeEstimator([ img_shape[1], img_shape[0]], method='direct_gcn', gcn_pkg_path=gcn_pkg_path)
+
   print(re.findRange([100,100,100,100], img))
   # depth, disp_resized = re.findRange(None, img)
   # vmax = np.percentile(disp_resized, 95)
