@@ -234,10 +234,10 @@ class Position3DVisualizer:
       name = os.path.basename(os.path.normpath(self.path))
       data = np.genfromtxt("{}.csv".format(name), delimiter=',')
 
-      self._gt_poses_with_range = data[:,3:6]
-      self._gt_poses_with_range_csen = data[:,6:9]
-      self._gt_poses_with_range_gcn = data[:,9:12]
-      self._gt_poses_level = data[:,0:3]
+      self._gt_poses_with_range = data[:,3:6].copy()
+      self._gt_poses_with_range_csen = data[:,6:9].copy()
+      self._gt_poses_with_range_gcn = data[:,9:12].copy()
+      self._gt_poses_level = data[:,0:3].copy()
 
       # print(self._gt_poses_level)
 
@@ -261,13 +261,9 @@ args = parser.parse_args()
 
 # exit()
 
-acts = []
-ests = []
-ests1 = []
-ests2 = []
+ests = {'act':[],'level':[],'fcn':[],'csen':[],'gcn':[]}
 
 for i in range(1,8):
-    # del opt
 
     folder_path = list(args.folder_path)
     gt_path = list(args.gt_path)
@@ -281,45 +277,71 @@ for i in range(1,8):
     folder_path = ''.join(folder_path)
     gt_path = ''.join(gt_path)
     print(folder_path, gt_path)
-    opt = Position3DVisualizer(folder_path, gt_path, plot_type='NONE', \
+    opt = Position3DVisualizer(folder_path, gt_path, plot_type='ERR', \
                               csen_pkg_path=args.csen_path , gcn_pkg_path=args.gcn_path)
-    opt.to3D()
+    # opt.to3D()
+    opt.read_from_file(visualize=True)
 
-    act = np.linalg.norm(opt._gt_poses_with_alt[:]-opt._drone_poses[:], axis=1)
-    est = np.linalg.norm(opt._gt_poses_level[:]-opt._drone_poses[:], axis=1)
-    est1 = np.linalg.norm(opt._gt_poses_with_range[:]-opt._drone_poses[:], axis=1)
-    est2 = np.linalg.norm(opt._gt_poses_with_range_csen[:]-opt._drone_poses[:], axis=1)
+    ests['act'].append(
+      np.linalg.norm(opt._gt_poses_with_alt[:]-opt._drone_poses[:], axis=1)
+    )
+    ests['level'].append(
+      np.linalg.norm(opt._gt_poses_level[:]-opt._drone_poses[:], axis=1)
+    )
+    ests['fcn'].append(
+      np.linalg.norm(opt._gt_poses_with_range[:]-opt._drone_poses[:], axis=1)
+    )
+    ests['csen'].append(
+      np.linalg.norm(opt._gt_poses_with_range_csen[:]-opt._drone_poses[:], axis=1)
+    )
+    ests['gcn'].append(
+      np.linalg.norm(opt._gt_poses_with_range_gcn[:]-opt._drone_poses[:], axis=1)
+    )
 
-    acts.append(act)
-    ests.append(est)
-    ests1.append(est1)
-    ests2.append(est2)
+    del opt
 
-plt.rcParams["figure.figsize"] = (5,5)
-fig, ax = plt.subplots()
+def scatter_plot(act, est, name):
+  plt.rcParams["figure.figsize"] = (5,5)
+  fig, ax = plt.subplots()
 
-ax.plot([0,30], [0,30], color='red', linewidth=2)
+  ax.plot([0,30], [0,30], color='red', linewidth=2)
 
-acts = np.hstack(acts)
-ests = np.hstack(ests)
-ests1 = np.hstack(ests1)
-ests2 = np.hstack(ests2)
+  act = np.hstack(act)
+  est = np.hstack(est)
+
+  rmv_idxs = np.where(est>49)
+  est = np.delete(est, rmv_idxs) 
+  act = np.delete(act, rmv_idxs) 
+  
+  sort_idxs = np.argsort( np.abs(est-act) )
+  
+  sort_idxs = np.delete(sort_idxs, np.random.choice(range(700), size=650, replace=False)) 
+  est = est[sort_idxs]
+  act = act[sort_idxs]
+
+  ax.scatter(act, est, color='blue', s=4)\
+
+  rms = np.sqrt(np.mean((est-act)**2))
+  ax.fill_between(np.arange(0,31), np.arange(0,31)+rms, np.arange(0,31)-rms, color='red', alpha=0.3)
+
+  ax.legend()
+  ax.grid()
+
+  ax.arrow(x=17, y=17, dx=0, dy=-rms, color='red')
+  ax.text(17, 10, 'RMS = {:.1f}'.format(rms), color='red')
+
+  ax.set_xlabel('Actual Distance (m)')
+  ax.set_ylabel('Estimated Distance (m)')
+
+  ax.set_xlim([0,30])
+  ax.set_ylim([0,30])
+
+  # name = os.path.basename(os.path.normpath(path))
+  plt.savefig('scatter_{}.pdf'.format(name), format='pdf')
 
 
-ax.scatter(acts, ests, color='blue', s=4)
-ax.scatter(acts, ests1, color='orange', s=4)
-ax.scatter(acts, ests2, color='green', s=4)
+# scatter_plot(ests['act'], ests['level'], 'level')
+# scatter_plot(ests['act'], ests['fcn'], 'fcn')
+# scatter_plot(ests['act'], ests['csen'], 'csen')
+scatter_plot(ests['act'], ests['gcn'], 'gcn')
 
-std = np.std(ests-acts)
-ax.fill_between(np.arange(0,31), np.arange(0,31)+std, np.arange(0,31)-std, color='red', alpha=0.3)
-
-ax.set_xlabel('Actual Distance (m)')
-ax.set_ylabel('Estimated Distance (m)')
-
-ax.set_xlim([0,30])
-ax.set_ylim([0,30])
-
-ax.legend()
-ax.grid()
-
-plt.savefig('scatter.pdf', format='pdf')
