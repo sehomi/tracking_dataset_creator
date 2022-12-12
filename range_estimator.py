@@ -204,7 +204,7 @@ class RangeEstimator:
         elif v[2] <= 0:
             return max_dist*v
 
-    def findRange(self, rect, image):
+    def findRange(self, rect, image, return_depth_img=False):
         if self.method == 'direct_fcn':
             x1 = np.array([[rect[0], rect[1], rect[0]+rect[2], rect[1]+rect[3]]])
             # x2 = self.scalar1.fit_transform(x1)
@@ -254,16 +254,23 @@ class RangeEstimator:
             x2 = int(rect[0]+rect[2])
             y2 = int(rect[1]+rect[3])
 
-            return np.mean(depth[y1:y2, x1:x2])
+            if return_depth_img:
+                return np.mean(depth[y1:y2, x1:x2]), depth
+            else:
+                return np.mean(depth[y1:y2, x1:x2])
             # return depth, disp_resized.squeeze().cpu().numpy()
 
-    def findPos(self, image, rect, direction, z, cls='person'):
+    def findPos(self, image, rect, direction, z, cls='person', return_depth_img=False):
         assert cls == 'person'
 
         pos = None
+        depth = None
         if 'direct' in self.method:
             if self.isDistantFromBoundary(rect):
-                rng = self.findRange(rect, image)
+                if return_depth_img:
+                    rng, depth = self.findRange(rect, image, return_depth_img=return_depth_img)
+                else:
+                    rng = self.findRange(rect, image, return_depth_img=return_depth_img)
                 pos = rng*direction
 
                 self.last_z = np.abs(pos[2])
@@ -278,7 +285,10 @@ class RangeEstimator:
             noise = (np.random.randn()*self.noise_mag) - self.noise_mag/2
             pos = self.scale_vector(direction, z + noise)
 
-        return pos
+        if return_depth_img:
+            return pos, depth
+        else:
+            return pos
 
 
 if __name__ == "__main__":
