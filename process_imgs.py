@@ -131,10 +131,16 @@ class Position3DVisualizer:
         box = self._gt_boxes[index].copy()
         direction = self._gt_poses_with_alt[index]-self._drone_poses[index]
         direction = direction/np.linalg.norm(direction)
-        self._re.findPos(self._img_files[index], box, direction, self._drone_poses[index,2]) 
-        self._re_level.findPos(self._img_files[index], box, direction, self._drone_poses[index,2]) 
-        self._re_csen.findPos(self._img_files[index], box, direction, self._drone_poses[index,2]) 
-        _, depth = self._re_gcn.findPos(self._img_files[index], box, direction, self._drone_poses[index,2], return_depth_img=True)
+        fcn_pos = self._re.findPos(self._img_files[index], box, direction, self._drone_poses[index,2]) 
+        level_pos = self._re_level.findPos(self._img_files[index], box, direction, self._drone_poses[index,2]) 
+        csen_pos = self._re_csen.findPos(self._img_files[index], box, direction, self._drone_poses[index,2]) 
+        gcn_pos, depth = self._re_gcn.findPos(self._img_files[index], box, direction, self._drone_poses[index,2], return_depth_img=True)
+
+        gt_dist = np.linalg.norm(self._gt_poses_with_alt[index]-self._drone_poses[index])
+        fcn_dist = np.linalg.norm(fcn_pos-self._drone_poses[index])
+        level_dist = np.linalg.norm(level_pos-self._drone_poses[index])
+        csen_dist = np.linalg.norm(csen_pos-self._drone_poses[index])
+        gcn_dist = np.linalg.norm(gcn_pos-self._drone_poses[index])
 
         x1 = int(box[0])
         y1 = int(box[1])
@@ -142,16 +148,32 @@ class Position3DVisualizer:
         y2 = int(box[5])
         cv.rectangle(img_copy1, (x1, y1), (x2, y2), (0,0,0), 2)
         cv.rectangle(img_copy2, (x1, y1), (x2, y2), (255,0,0), 2)
-        cv.rectangle(img_copy3, (x1, y1), (x2, y2), (0,255,0), 2)
+        cv.rectangle(img_copy3, (x1, y1), (x2, y2), (0,255,255), 2)
         cv.rectangle(img_copy4, (x1, y1), (x2, y2), (0,0,255), 2)
-        cv.rectangle(depth, (x1, y1), (x2, y2), (0,255,255), 2)
+
+        img_copy1 = cv.putText(img_copy1, 'dist: {:.1f} m'.format(gt_dist), (x1, y1-15), cv.FONT_HERSHEY_DUPLEX, 0.75, (0,0,0), 2, cv.LINE_AA)
+        img_copy2 = cv.putText(img_copy2, 'dist: {:.1f} m'.format(fcn_dist), (x1, y1-15), cv.FONT_HERSHEY_DUPLEX, 0.75, (255,0,0), 2, cv.LINE_AA)
+        img_copy3 = cv.putText(img_copy3, 'dist: {:.1f} m'.format(level_dist), (x1, y1-15), cv.FONT_HERSHEY_DUPLEX, 0.75, (0,255,255), 2, cv.LINE_AA)
+        img_copy4 = cv.putText(img_copy4, 'dist: {:.1f} m'.format(csen_dist), (x1, y1-15), cv.FONT_HERSHEY_DUPLEX, 0.75, (0,0,255), 2, cv.LINE_AA)
+
 
         data_name = 'example_imgs/' + self.path.split('/')[-2] + '_' + str(index)
         cv.imwrite(data_name+'_gt.jpg', img_copy1)
-        cv.imwrite(data_name+'_level.jpg', img_copy2)
-        cv.imwrite(data_name+'_fcn.jpg', img_copy3)
+        cv.imwrite(data_name+'_fcn.jpg', img_copy2)
+        cv.imwrite(data_name+'_level.jpg', img_copy3)
         cv.imwrite(data_name+'_csen.jpg', img_copy4)
-        cv.imwrite(data_name+'_gcn.jpg', depth)
+
+        min_disp = 1/self._re_gcn.MAX_DEPTH
+        max_disp = 1/self._re_gcn.MIN_DEPTH
+        d = 1/(depth*max_disp + min_disp) * self._re_gcn.SCALE
+        vmax = np.percentile(depth, 95)
+        plt.imsave(data_name+'_gcn.jpg', d[0,0,:,:], cmap='magma', vmax=vmax)
+
+        d_img = cv.imread(data_name+'_gcn.jpg')
+        cv.rectangle(d_img, (x1, y1), (x2, y2), (0,255,0), 2)
+        d_img = cv.putText(d_img, 'dist: {:.1f} m'.format(gcn_dist), (x1, y1-15), cv.FONT_HERSHEY_DUPLEX, 0.75, (0,255,0), 2, cv.LINE_AA)
+        cv.imwrite(data_name+'_gcn.jpg', d_img)
+        
 
 parser = argparse.ArgumentParser()
 parser.add_argument("folder_path", help="Path to data folder")
@@ -163,4 +185,4 @@ args = parser.parse_args()
 
 opt = Position3DVisualizer(args.folder_path, args.gt_path, plot_type='ERR', \
                            csen_pkg_path=args.csen_path , gcn_pkg_path=args.gcn_path)
-opt.to3D(10)
+opt.to3D(1)

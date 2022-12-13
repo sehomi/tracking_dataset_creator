@@ -255,14 +255,14 @@ class RangeEstimator:
             y2 = int(rect[1]+rect[3])
 
             if return_depth_img:
-                return np.mean(depth[y1:y2, x1:x2]), depth
+                return np.mean(depth[y1:y2, x1:x2]), disp_resized.cpu().numpy()
             else:
                 return np.mean(depth[y1:y2, x1:x2])
             # return depth, disp_resized.squeeze().cpu().numpy()
 
-    def findPos(self, image, rect, direction, z, cls='person', return_depth_img=False):
+    def findPos(self, image, rct, direction, z, cls='person', return_depth_img=False):
+        rect = [rct[0], rct[1], rct[4]-rct[0], rct[4]-rct[1]]
         assert cls == 'person'
-
         pos = None
         depth = None
         if 'direct' in self.method:
